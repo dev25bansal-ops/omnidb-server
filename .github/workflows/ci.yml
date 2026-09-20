@@ -1,0 +1,90 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ["3.11", "3.12", "3.14"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install
+        run: pip install -e ".[dev,hnsw]"
+      - name: Lint
+        run: ruff check omnidb_server/ tests/
+      - name: Type check
+        run: |
+          pip install mypy
+          mypy omnidb_server/
+      - name: Tests with branch coverage
+        # AUDIT-I14: measured baseline 85.3% branch (2026-09-18, full suite);
+        # 80% is the enforced floor with headroom for platform-conditional
+        # branches (msvcrt/fcntl paths do not both execute on one runner).
+        run: python -m pytest -q --cov=omnidb_server --cov-branch --cov-fail-under=80 --cov-report=term-missing --cov-report=xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-${{ matrix.os }}-${{ matrix.python }}
+          path: coverage.xml
+
+  # AUDIT-I14: mandatory supported backend job; skip outcomes are failures.
+  hnsw-required:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install supported HNSW backend
+        run: pip install -e ".[dev,hnsw]"
+      - name: Require working native backend import
+        run: python -c "import hnswlib; assert hasattr(hnswlib, 'Index')"
+      - name: Backend contracts
+        run: >-
+          python -m pytest -q --junitxml=hnsw-results.xml
+          tests/test_reconcile.py::test_hnsw_reconciliation
+          tests/test_db.py::test_hnsw_roundtrip_and_reopen
+          tests/test_issue_fixes.py::test_compaction_scheduled_then_rebuilt_on_open
+          tests/test_audit_remediation.py::test_ef_search_config_reaches_hnsw
+      - name: Forbid backend skips and missing test cases
+        if: always()
+        run: >-
+          python -c "import xml.etree.ElementTree as E;
+          cases = E.parse('hnsw-results.xml').getroot().findall('.//testcase');
+          assert len(cases) >= 4, 'required backend cases were not collected';
+          assert all(c.find('skipped') is None and c.find('failure') is None and c.find('error') is None for c in cases), 'required backend tests skipped or failed'"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hnsw-required-results
+          path: hnsw-results.xml
+
+  benchmark-gate:
+    needs: [test, hnsw-required]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Install
+        run: pip install -e ".[dev,hnsw]"
+      - name: Vector baseline gate
+        run: python bench/baseline.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bench-results
+          path: bench/results.md

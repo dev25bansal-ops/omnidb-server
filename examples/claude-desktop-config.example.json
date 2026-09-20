@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json.schemastore.org/mcp-config.json",
+  "mcpServers": {
+    "omnidb": {
+      "_comment": [
+        "Cross-platform:",
+        "  Windows : 'C:/Python311/python.exe' or %LOCALAPPDATA%\\Programs\\Python\\Python311\\python.exe",
+        "  macOS   : use the output of `which python3` (e.g. /opt/homebrew/bin/python3 or /usr/local/bin/python3)",
+        "  Linux   : use the output of `which python3`",
+        "OMNIDB_HOME: put your data dir anywhere you have write access; default is ~/.omnidb"
+      ],
+      "command": "python3",
+      "args": ["-m", "omnidb_server", "serve"],
+      "env": {
+        "OMNIDB_HOME": "/Users/yourname/.omnidb",
+        "OMNIDB_EMBEDDER": "hashing"
+      }
+    }
+  }
+}

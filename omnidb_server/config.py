@@ -1,0 +1,232 @@
+from __future__ import annotations
+
+import math
+import os
+import tomllib
+from dataclasses import MISSING, dataclass, fields
+from pathlib import Path
+
+_TOML_NAME = "omnidb.toml"
+
+
+class ConfigError(RuntimeError):
+    pass
+
+
+def _env(name: str) -> str | None:
+    value = os.environ.get(name)
+    return value if value not in (None, "") else None
+
+
+def _coerce(raw, template, name="value"):
+    """AUDIT-I15: accept explicit scalar forms without lossy conversion."""
+    try:
+        if template is None or isinstance(template, str):
+            return raw if isinstance(raw, str) else str(raw)
+        if isinstance(template, bool):
+            token = str(raw).strip().lower()
+            if token in ("1", "true", "yes", "on"):
+                return True
+            if token in ("0", "false", "no", "off"):
+                return False
+            raise ValueError("must be an explicit boolean token")
+        if isinstance(template, int):
+            if isinstance(raw, bool):
+                raise ValueError("must be an integer, not a boolean")
+            if isinstance(raw, float) and (not math.isfinite(raw) or not raw.is_integer()):
+                raise ValueError("must be an exact integer")
+            return int(raw)
+        if isinstance(template, float):
+            value = float(raw)
+            if not math.isfinite(value):
+                raise ValueError("must be finite")
+            return value
+        return raw
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ConfigError(f"config value {name}: {exc} (got {raw!r})") from exc
+
+
+def _default_of(field):
+    return None if field.default is MISSING else field.default
+
+
+def _read_toml(path: Path) -> dict:
+    with path.open("rb") as handle:
+        return tomllib.load(handle)
+
+
+@dataclass
+class Config:
+    home: Path
+    embedder: str = "auto"  # auto | hashing | fastembed
+    vector_index: str = "auto"  # auto | hnsw | brute
+    half_life_hours: float = 168.0
+    recency_weight: float = 0.15
+    freq_weight: float = 0.05
+    # corpus_mode: ranking profile for corpus retrieval (BEIR-style search).
+    # Measured (bench/research-results.md): the memory rerank costs 40-56%
+    # nDCG@10 on corpus workloads where all docs share near-identical
+    # age/access, so corpus_mode zeroes both and defers to pure fusion.
+    # Agent-memory workloads should keep it off.
+    corpus_mode: bool = False
+    rrf_k: int = 60
+    dense_weight: float = 0.7
+    sparse_weight: float = 0.3
+    k_fetch: int = 50
+    max_search_rows: int = 500
+    persist_every_ops: int = 64
+    persist_every_s: float = 0.25
+    # PERF-01: the sidecar persist is a full O(N) dump, so the time trigger
+    # additionally requires this many pending ops, and never fires more
+    # often than a multiple of the last flush's own duration. The ceiling
+    # bounds how long dirty vectors sit (they are reconstructible from the
+    # DB, so this limits post-crash re-embed work, not durability).
+    persist_min_ops: int = 8
+    persist_max_s: float = 5.0
+    dead_compact_ratio: float = 0.2
+    # hnsw ef_search (PERF-07): the benchmark gate shows ef=128 materially
+    # better at 10k rows; the value is honored down to a floor of 16.
+    ef_search: int = 64
+    # PERF-08: when recall is scoped by agent_id, the dense leg over-fetches
+    # the global ANN by this factor before the agent filter drops foreign
+    # rows; raise it when many agents share one home.
+    agent_overfetch: float = 3.0
+    # SEC-04: upper bound on one memory's content, so a runaway agent cannot
+    # bloat the DB, FTS, and the embedder in a single call.
+    max_content_chars: int = 100_000
+    query_log: bool = False
+    # PERF-05: prune the queries table down to this many newest rows
+    # occasionally while logging; 0 disables pruning.
+    query_retention_rows: int = 100_000
+
+    llm_base_url: str | None = None
+    llm_model: str | None = None
+    llm_api_key: str | None = None
+    # SEC-01: facts the LLM reports below this confidence are dropped instead
+    # of written into long-term memory; 0.0 keeps every validated fact.
+    consolidation_min_confidence: float = 0.0
+
+    ollama_autodetect: bool = False
+    # E-12: consolidation splits the episode window into LLM calls of this
+    # many episodes; a failed chunk retries alone on the next run.
+    consolidation_chunk_episodes: int = 10
+
+    @staticmethod
+    def load(home: str | Path | None = None) -> "Config":
+        """Precedence: CLI arg > environment > omnidb.toml > built-in defaults.
+
+        omnidb.toml is looked up in the CWD and in the resolved home directory
+        (the home copy wins). Field names in the file mirror the dataclass.
+        """
+        return Config.load_detailed(home)[0]
+
+    @staticmethod
+    def load_detailed(
+        home: str | Path | None = None,
+    ) -> tuple["Config", dict[str, str]]:
+        """Like `load`, but also returns each field's value source
+        (`"default"`, a toml path, or `env:OMNIDB_*`) for the
+        `omnidb-server config` report (E-15)."""
+        arg_home = Path(home) if home is not None else None
+        env_home_value = _env("OMNIDB_HOME")
+        env_home = Path(env_home_value) if env_home_value else None
+        resolved_home = arg_home or env_home or Path.home() / ".omnidb"
+
+        merged: dict = {}
+        source: dict[str, str] = {}
+        cwd_toml = Path.cwd() / _TOML_NAME
+        if cwd_toml.is_file():
+            merged.update(_read_toml(cwd_toml))
+            for key in merged:
+                source[key] = str(cwd_toml)
+        # a bare "home" key in the CWD file can redirect the home directory
+        # when neither a CLI arg nor the environment pinned one
+        if not arg_home and not env_home and isinstance(merged.get("home"), str):
+            resolved_home = Path(merged["home"])
+        home_toml = resolved_home / _TOML_NAME
+        if home_toml != cwd_toml and home_toml.is_file():
+            home_merged = _read_toml(home_toml)
+            merged.update(home_merged)
+            for key in home_merged:
+                source[key] = str(home_toml)
+
+        known = {f.name for f in fields(Config)}
+        unknown = set(merged) - known
+        if unknown:
+            raise ConfigError(f"unknown keys in {_TOML_NAME}: {sorted(unknown)}")
+
+        values: dict = {}
+        for field in fields(Config):
+            if field.name == "home":
+                continue
+            default = _default_of(field)
+            if field.name in merged:
+                values[field.name] = _coerce(merged[field.name], default, field.name)
+            env_value = _env("OMNIDB_" + field.name.upper())
+            env_name = "OMNIDB_" + field.name.upper()
+            if env_value is None and field.name == "vector_index":
+                # Legacy alias: the README, docs/operations.md, and the
+                # VectorIndexError recovery messages all document OMNIDB_INDEX,
+                # and users with a foreign sidecar can only act on that message.
+                # The field-native OMNIDB_VECTOR_INDEX wins when both are set.
+                env_value = _env("OMNIDB_INDEX")
+                env_name = "OMNIDB_INDEX"
+            if env_value is not None:
+                values[field.name] = _coerce(env_value, default, field.name)
+                source[field.name] = f"env:{env_name}"
+            if field.name not in values:
+                source.setdefault(field.name, "default")
+            elif field.name not in source:
+                # from the home toml: record the actual file for the report
+                source[field.name] = str(home_toml) if home_toml.is_file() else "toml"
+
+        values["home"] = arg_home or env_home or resolved_home
+        source["home"] = ("cli" if arg_home
+                          else "env:OMNIDB_HOME" if env_home
+                          else "default")
+        cfg = Config(**values)
+        _validate_config(cfg)
+        return cfg, source
+
+    # backward-compatible alias used across tests/CLI
+    from_env = load
+
+
+def _validate_config(cfg: "Config") -> None:
+    """Fail fast on obviously-broken values (E-15): a typo like
+    `persist_every_ops = 0` otherwise turns into per-write sidecar dumps
+    instead of a named configuration error."""
+    # AUDIT-I15: direct Config construction must obey finite-value policy too.
+    for field in fields(cfg):
+        if isinstance(field.default, float):
+            value = getattr(cfg, field.name)
+            try:
+                finite = math.isfinite(value)
+            except (TypeError, ValueError, OverflowError):
+                finite = False
+            if not finite:
+                raise ConfigError(f"config value {field.name} must be finite (got {value!r})")
+    checks: list[tuple[str, bool, str]] = [
+        ("k_fetch", cfg.k_fetch >= 1, "must be >= 1"),
+        ("rrf_k", cfg.rrf_k >= 1, "must be >= 1"),
+        ("max_search_rows", cfg.max_search_rows >= 1, "must be >= 1"),
+        ("persist_every_ops", cfg.persist_every_ops >= 1, "must be >= 1"),
+        ("persist_every_s", cfg.persist_every_s > 0, "must be > 0"),
+        ("persist_min_ops", cfg.persist_min_ops >= 1, "must be >= 1"),
+        ("persist_max_s", cfg.persist_max_s > 0, "must be > 0"),
+        ("dead_compact_ratio", 0 < cfg.dead_compact_ratio <= 1,
+         "must be in (0, 1]"),
+        ("half_life_hours", cfg.half_life_hours > 0, "must be > 0"),
+        ("agent_overfetch", cfg.agent_overfetch >= 1.0, "must be >= 1.0"),
+        ("ef_search", cfg.ef_search >= 16, "must be >= 16"),
+        ("max_content_chars", cfg.max_content_chars >= 1, "must be >= 1"),
+        ("query_retention_rows", cfg.query_retention_rows >= 0, "must be >= 0"),
+        ("consolidation_chunk_episodes", cfg.consolidation_chunk_episodes >= 1,
+         "must be >= 1"),
+        ("consolidation_min_confidence",
+         0.0 <= cfg.consolidation_min_confidence <= 1.0, "must be in [0, 1]"),
+    ]
+    bad = [(name, rule) for name, ok, rule in checks if not ok]
+    if bad:
+        name, rule = bad[0]
+        raise ConfigError(f"config value {name} {rule} (got {getattr(cfg, name)!r})")

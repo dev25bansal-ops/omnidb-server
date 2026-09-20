@@ -1,0 +1,10 @@
+| first stage | embedder | w | stage recall@w | nDCG@10 base | nDCG@10 reranked | delta | p |
+|---|---|---|---|---|---|---|---|
+| bm25 | - | 25 | 0.8339 | 0.6569 | 0.7052 | +0.0484 | 0.0000 |
+| bm25 | - | 100 | 0.8759 | 0.6569 | 0.6952 | +0.0383 | 0.0017 |
+| omnidb-hybrid | minilm | 25 | 0.8580 | 0.6984 | 0.7051 | +0.0067 | 0.5462 |
+| omnidb-hybrid | minilm | 100 | 0.9383 | 0.7059 | 0.7125 | +0.0066 | 0.6000 |
+| omnidb-hybrid | bge-base | 25 | 0.9260 | 0.7531 | 0.7337 | -0.0194 | 0.0900 |
+| omnidb-hybrid | bge-base | 100 | 0.9710 | 0.7492 | 0.7165 | -0.0327 | 0.0155 |
+
+VERDICT: one-line: fiqa PARTIALLY REPLICATES / DIVERGES on scifact - bm25s w25:+0.0484 -> w100:+0.0383 (gain does NOT grow), omni minilm w25:+0.0067 -> w100:+0.0066, omni bge-base w25:-0.0194 -> w100:-0.0327 (best hybrid delta +0.0067).   significant hybrid loss: bge-base w=100 -0.0327 (p=0.0155)

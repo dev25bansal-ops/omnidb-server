@@ -1,0 +1,205 @@
+from __future__ import annotations
+
+import json
+import os
+import re
+import tempfile
+import zipfile
+from pathlib import Path
+
+from .store import _SELECTIVE, E_CONSTRAINT, E_NOT_FOUND, E_TYPE, StoreError
+
+_SKILL_KINDS = ("procedural", "semantic")
+_MANIFEST = "manifest.json"
+_MEMORIES = "memories.jsonl"
+_MANIFEST_KEYS = {"name", "version", "description", "triggers"}
+
+
+def _skill_rows(store, skill_name: str) -> list:
+    """Live memory rows tagged metadata["skill"] == skill_name, ordered by id.
+
+    The LIKE prefilter is a heuristic on the canonical json.dumps form
+    ('"skill": "<name>"'); the parsed comparison below is the exact test, so
+    over-matches are filtered out. Names containing quotes or LIKE wildcards
+    can under-match at the SQL stage — a known limitation of the heuristic.
+    """
+    rows = store.conn.execute(
+        f"SELECT id, kind, content, metadata, trigger_patterns FROM memories "
+        f"WHERE metadata LIKE ? AND {_SELECTIVE} ORDER BY id",
+        ('%"skill": "' + skill_name + '"%',),
+    ).fetchall()
+    return [
+        row for row in rows
+        if json.loads(row["metadata"]).get("skill") == skill_name
+    ]
+
+
+def _write_bundle(path: str | Path, manifest: dict, memory_lines: list[str]) -> None:
+    """Write the zip atomically: sibling temp, fsync, rename."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=path.name + ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            with zipfile.ZipFile(handle, "w", zipfile.ZIP_DEFLATED) as zf:
+                zf.writestr(_MANIFEST, json.dumps(manifest, indent=2))
+                zf.writestr(_MEMORIES, "".join(line + "\n" for line in memory_lines))
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
+
+
+def export_skill(store, skill_name: str, path: str | Path) -> dict:
+    """Bundle the live memories tagged metadata["skill"] == skill_name into a zip.
+
+    Bundle layout: manifest.json (name/version/description/triggers) plus
+    memories.jsonl (one JSON object per line). trigger_patterns are taken from
+    the first matching procedural row that carries them; the bundle carries
+    procedural/semantic rows only.
+    """
+    rows = _skill_rows(store, skill_name)
+    triggers = None
+    memory_lines: list[str] = []
+    for row in rows:
+        if row["kind"] not in _SKILL_KINDS:
+            raise StoreError(
+                f"memory {row['id']} has kind {row['kind']!r}; skill bundles carry "
+                f"only {' and '.join(_SKILL_KINDS)} rows",
+                E_TYPE,
+            )
+        if row["kind"] == "procedural" and triggers is None and row["trigger_patterns"] is not None:
+            try:
+                patterns = json.loads(row["trigger_patterns"])
+            except (TypeError, ValueError):
+                patterns = []
+            if isinstance(patterns, list):
+                triggers = patterns
+        memory_lines.append(json.dumps({
+            "content": row["content"],
+            "kind": row["kind"],
+            "metadata": json.loads(row["metadata"]),
+        }))
+    manifest = {
+        "name": skill_name,
+        "version": "1",
+        "description": "",
+        "triggers": triggers or [],
+    }
+    _write_bundle(path, manifest, memory_lines)
+    return {"name": skill_name, "memories": len(memory_lines), "path": str(path)}
+
+
+def _validate_manifest(manifest) -> None:
+    if not isinstance(manifest, dict):
+        raise StoreError("manifest.json must be a JSON object", E_TYPE)
+    unknown = set(manifest) - _MANIFEST_KEYS
+    if unknown:
+        raise StoreError(f"unknown manifest keys: {sorted(unknown)}", E_TYPE)
+    if not isinstance(manifest.get("name"), str) or not manifest["name"].strip():
+        raise StoreError("manifest.name must be a non-empty string", E_TYPE)
+    for key in ("version", "description"):
+        if key in manifest and not isinstance(manifest[key], str):
+            raise StoreError(f"manifest.{key} must be a string", E_TYPE)
+    triggers = manifest.get("triggers", [])
+    if not isinstance(triggers, list) or not all(isinstance(t, str) for t in triggers):
+        raise StoreError("manifest.triggers must be a list of regex strings", E_TYPE)
+    for pattern in triggers:
+        try:
+            re.compile(pattern)
+        except re.error as exc:
+            raise StoreError(f"manifest.triggers: invalid regex {pattern!r} ({exc})", E_TYPE) from exc
+
+
+def _parse_memory_lines(text: str) -> list[dict]:
+    records: list[dict] = []
+    for lineno, line in enumerate(text.splitlines(), start=1):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            record = json.loads(stripped)
+        except ValueError as exc:
+            raise StoreError(f"memories.jsonl line {lineno}: invalid JSON ({exc})", E_TYPE) from exc
+        if not isinstance(record, dict) or not isinstance(record.get("content"), str):
+            raise StoreError(
+                f"memories.jsonl line {lineno}: record needs string content", E_TYPE
+            )
+        kind = record.get("kind", "semantic")
+        if kind not in _SKILL_KINDS:
+            raise StoreError(
+                f"memories.jsonl line {lineno}: unknown kind {kind!r}; expected one of {_SKILL_KINDS}",
+                E_TYPE,
+            )
+        metadata = record.get("metadata") or {}
+        if not isinstance(metadata, dict):
+            raise StoreError(f"memories.jsonl line {lineno}: metadata must be an object", E_TYPE)
+        records.append({"content": record["content"], "kind": kind, "metadata": metadata})
+    return records
+
+
+def import_skill(store, path: str | Path, overwrite: bool = False) -> dict:
+    """Import a skill bundle; every memory is re-tagged with manifest.name.
+
+    Duplicate-safety: refuses when live memories tagged with that skill already
+    exist unless overwrite=True, which soft-deletes the existing rows first.
+    Procedural rows receive the manifest triggers as trigger_patterns.
+    """
+    path = Path(path)
+    if not path.is_file():
+        raise StoreError(f"skill bundle not found: {path}", E_NOT_FOUND)
+    try:
+        with zipfile.ZipFile(path) as zf:
+            missing = {_MANIFEST, _MEMORIES} - set(zf.namelist())
+            if missing:
+                raise StoreError(f"bundle is missing {sorted(missing)}", E_TYPE)
+            try:
+                manifest = json.loads(zf.read(_MANIFEST).decode("utf-8"))
+            except ValueError as exc:
+                raise StoreError(f"{_MANIFEST} is not valid JSON ({exc})", E_TYPE) from exc
+            _validate_manifest(manifest)
+            memories = _parse_memory_lines(zf.read(_MEMORIES).decode("utf-8"))
+    except zipfile.BadZipFile as exc:
+        raise StoreError(f"not a valid skill bundle zip: {exc}", E_TYPE) from exc
+    except OSError as exc:
+        raise StoreError(f"cannot read skill bundle: {exc}", E_NOT_FOUND) from exc
+
+    name = manifest["name"]
+    triggers = manifest.get("triggers") or []
+    existing = _skill_rows(store, name)
+    if existing and not overwrite:
+        raise StoreError(f"skill '{name}' already imported", E_CONSTRAINT)
+    if existing:
+        store.forget_many([int(row["id"]) for row in existing])
+    for record in memories:
+        store.remember(
+            record["content"],
+            kind=record["kind"],
+            metadata={**record["metadata"], "skill": name},
+            trigger_patterns=triggers if record["kind"] == "procedural" and triggers else None,
+        )
+    return {"name": name, "memories": len(memories), "triggers": len(triggers)}
+
+
+def list_skills(store) -> list[dict]:
+    """Group live memories by metadata["skill"]; counts sorted descending."""
+    counts: dict[str, int] = {}
+    for row in store.conn.execute(
+        f"SELECT metadata FROM memories WHERE {_SELECTIVE}"
+    ):
+        try:
+            metadata = json.loads(row["metadata"])
+        except ValueError:
+            continue
+        if not isinstance(metadata, dict):
+            continue
+        name = metadata.get("skill")
+        if isinstance(name, str) and name:
+            counts[name] = counts.get(name, 0) + 1
+    return [
+        {"name": name, "memories": count}
+        for name, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+    ]
