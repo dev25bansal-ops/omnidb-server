@@ -118,14 +118,28 @@ single-tenant stdio runs as the implicit `default` tenant. See
 | Variable | Default | Meaning |
 |---|---|---|
 | `OMNIDB_HOME` | `~/.omnidb` | data directory |
-| `OMNIDB_EMBEDDER` | `auto` | `auto`/`hashing` are offline-safe (never download); `fastembed` opts into real semantics (`[semantic]` extra, ~100MB model on first run). Embedder identity is pinned per database. |
-| `OMNIDB_INDEX` | `auto` | `auto` \| `hnsw` \| `brute` |
-| `OMNIDB_HALF_LIFE_HOURS` | `168` | recency half-life for rerank |
-| `OMNIDB_RECENCY_WEIGHT` / `OMNIDB_FREQ_WEIGHT` | `0.15` / `0.05` | rerank weights (RRF base is weight-free) |
-| `OMNIDB_K_FETCH` | `50` | candidates fetched per leg before fusion |
-| `OMNIDB_RRF_K` | `60` | RRF smoothing constant |
-| `OMNIDB_MAX_SEARCH_ROWS` | `500` | row cap for the `search` tool |
-| `OMNIDB_LLM_BASE_URL` / `_MODEL` / `_API_KEY` | unset | OpenAI-compatible endpoint used by `consolidate`; stub when unset. With one configured, a failed call consumes nothing (episodes stay retryable) |
+| `OMNIDB_EMBEDDER` | `auto` | `auto`/`hashing` are offline-safe (never download); `fastembed` opts into real semantics ([semantic] extra, ~100MB model on first run). Embedder identity is pinned per database; mismatch refuses open (OMN-006). Migrate with `re-embed --yes`. |
+| `OMNIDB_INDEX` or legacy alias | `auto` | index backend: `auto` \| `hnsw` \| `brute`. Canonical name now `OMNIDB_VECTOR_INDEX`; legacy `OMNIDB_INDEX` supported but deprecated. |
+| `OMNIDB_HALF_LIFE_HOURS` | `168` | recency half-life for scoring rerank (default 7 days). Longer = fresher memories decay slower. |
+| `OMNIDB_RECENCY_WEIGHT` / `OMNIDB_FREQ_WEIGHT` | `0.15` / `0.05` | recency/frequency weighting factors added to RRF base score. Zero disables each weight independently. |
+| `OMNIDB_K_FETCH` | `50` | candidates fetched from each retrieval leg (dense + sparse) before fusion pool ceiling. |
+| `OMNIDB_RRF_K` | `60` | reciprocal rank fusion k smoothing constant (Cormack et al. 2009). Larger = softer rank penalty. Measured optimal dense_weight varies by dataset (0.7 on nfcorpus; ≤0.3 on scifact/scidocs) — corpus-dependent. |
+| `OMNIDB_DENSE_WEIGHT` / `OMNIDB_SPARSE_WEIGHT` | `0.7` / `0.3` | dense/sparse leg weights passed to RRF; sum not required to be 1 but equal weights are classical. Tuned by corpus; default favors semantic over lexical. |
+| `OMNIDB_CORPUS_MODE` | `False` | behavior-changing: zeroes both recency/frequency weights, making retrieval pure fusion of dense + sparse — useful only for corpus workloads where memories share near-identical age/access patterns. For standard agent memory workloads, keep `False`. Measured impact: loses 40-56% nDCG@10 vs its own rerank-off path on BEIR benchmarks. |
+| `OMNIDB_EF_SEARCH` | `128` | HNSW search parameter (number of dynamic neighbors). Higher improves recall at cost of latency. Default 128 justified by measured gains (+0.193 recall@10 @ 10k/384d; +0.117 @ 100k/768d; worst-case p50 <1ms). Minimum enforced is 16. Full sweep measured in `bench/results.md`. |
+| `OMNIDB_AGENT_OVERFETCH` | `3.0` | global-overfetch multiplier when `agent_id` scoped recall uses the dense leg (global-ANN then filter). Raises candidate budget proportionally so dominant agents don't crowd scoped recalls below `k`. Valid >=1.0. |
+| `OMNIDB_MAX_CONTENT_CHARS` | `100_000` | per-call content size bound across DB, FTS, embedder. Prevents runaway calls bloating sidecars. Adjust if you expect long documents. |
+| `OMNIDB_CONSOLIDATION_MIN_CONFIDENCE` | `0.0` | facts returned by consolidation LLM below this floor are dropped, not stored. Facts carry `origin:"consolidation"` + model `confidence` metadata for filtering via `search`. Tune upward to reject low-confidence outputs. |
+| `OMNIDB_CONSOLIDATION_CHUNK_EPISODES` | `10` | number of episodic episodes per consolidation chunk (LLM call boundary). Failed chunks leave episodes unmarked (retryable); successful chunks mark consumed. Tuned around token budgets and retry semantics. |
+| `OMNIDB_OLLAMA_AUTODETECT` | `False` | when enabled, probe Ollama's `/models` endpoint (default http://127.0.0.1:11434/v1) to auto-resolve `llm_model` if unset. Never raises; any failure yields (None,None) and consolidates runs offline stub instead. |
+| `OMNIDB_PERSIST_EVERY_OPS` | `64` | vector-sidecar fsync threshold: flush after N pending operations since last persist. Tradeoff between I/O and crash-reconstruction window. |
+| `OMNIDB_PERSIST_EVERY_S` | `0.25` | min elapsed time between adaptive flush triggers. Combined with count thresholds and max-age ceiling. |
+| `OMNIDB_PERSIST_MIN_OPS` | `8` | operation-count trigger floor: adaptive time-trigger also requires pending_ops ≥ this value. |
+| `OMNIDB_PERSIST_MAX_S` | `5.0` | idle persistence ceiling: dirty state never persists more than N seconds without an operation event; background loop enforces via `maintenance_tick()`. |
+| `OMNIDB_DEAD_COMPACT_RATIO` | `0.2` | HNSW tombstone ratio triggering rebuild-on-open compaction. A dead_ratio >= threshold sets `compaction_due` marker next open. Brute-force has no tombstones. |
+| `OMNIDB_QUERY_LOG` | `False` | record query stats into `queries` table (`SELECT * FROM queries` via `schema()` examples). Requires explicit opt-in (config query_log, env var, or TOML). |
+| `OMNIDB_QUERY_RETENTION_ROWS` | `100_000` | maximum rows retained in `queries` log; periodically prunes oldest beyond this ceiling. Set 0 to disable pruning entirely. |
+| `OMNIDB_TENANTS` | inline map | multi-tenant: API key → tenant mapping object in omnidb.toml or `tenants.json` file beside home. `serve-http` requires at least one credential pair; missing credentials refuse to start (fail-closed startup). Keys stored as plaintext in config; prefer `tenants.json` written by secret manager. |
 
 ## Benchmarking
 
