@@ -4,6 +4,7 @@ import json
 import os
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -338,3 +339,148 @@ def open_vector_index(home: Path, kind: str, dim: int, count_hint: int,
             file=sys.stderr,
         )
         return BruteForceIndex(brute_path, dim)
+
+
+# ======================================================
+# MT-06 Phase 1: Per-Tenant Index Router (standalone, tested in isolation before integration)
+# ======================================================
+
+class MultiTenantIndexError(Exception):
+    """Raised when an invalid operation is attempted on the MultiTenantIndexRouter."""
+    pass
+
+
+class MultiTenantIndexRouter:
+    """Thread-safe per-tenant vector index router implementing the HnswlibIndex/BruteForceIndex protocol."""
+    
+    __slots__ = ("_home", "_dim", "_backends", "_lock", "_kind_preference", "_ef_search")
+
+    def __init__(self, home: Path, dim: int, kind: str | None = "brute", ef_search: int = 64):
+        self._home = home.resolve()
+        self._dim = dim
+        self._kind_preference = kind if kind else "brute"
+        self._ef_search = max(ef_search, 16)
+        self._backends: dict[str, "HnswlibIndex | BruteForceIndex"] = {}
+        self._lock = threading.RLock()
+
+    @property
+    def path(self) -> Path:
+        """Root path shared by all tenant indices."""
+        return self._home
+
+    @property
+    def dim(self) -> int:
+        """Embedding dimension shared across all tenants."""
+        return self._dim
+
+    @property
+    def kind(self) -> str:
+        """Report a single view of backend."""
+        with self._lock:
+            backends = list(self._backends.values())
+            has_hnsw = any(isinstance(b, HnswlibIndex) for b in backends)
+            has_brute = any(isinstance(b, BruteForceIndex) for b in backends)
+            if not backends:
+                return "multi"
+            if has_hnsw and not has_brute:
+                return "hnsw"
+            if has_brute and not has_hnsw:
+                return "brute"
+            return "multi"
+
+    def _get_backend_for_tenant(self, tenant: str) -> "HnswlibIndex | BruteForceIndex":
+        """Get or lazily construct a tenant's backend index."""
+        with self._lock:
+            if tenant in self._backends:
+                return self._backends[tenant]
+            backend_kind = self._kind_preference if self._kind_preference != "auto" else "brute"
+            idx_path_home = self._home / "tenants" / tenant
+            idx_path_home.mkdir(parents=True, exist_ok=True)
+            hnsw_path = idx_path_home / "index.hnsw"
+            brute_path = idx_path_home / "vectors.npz"
+            if backend_kind == "hnsw":
+                try:
+                    fresh = HnswlibIndex(hnsw_path, self._dim, count_hint=64 * 2, ef_search=self._ef_search)
+                    self._backends[tenant] = fresh
+                    return fresh
+                except Exception:
+                    pass
+            try:
+                fresh = BruteForceIndex.load(brute_path, self._dim) if brute_path.exists() else BruteForceIndex(brute_path, self._dim)
+            except Exception as exc:
+                raise MultiTenantIndexError(f"Failed to init brute index for tenant {tenant}: {exc}")
+            self._backends[tenant] = fresh
+            return fresh
+
+    def add(self, ids, vecs, tenant: str) -> None:
+        backend = self._get_backend_for_tenant(tenant)
+        backend.add(ids, vecs)
+
+    def update(self, mid: int, vec, tenant: str) -> None:
+        backend = self._get_backend_for_tenant(tenant)
+        backend.update(mid, vec)
+
+    def remove(self, ids, tenant: str) -> None:
+        backend = self._get_backend_for_tenant(tenant)
+        backend.remove(ids)
+
+    def query(self, vec, k: int, tenant: str) -> list[tuple[int, float]]:
+        backend = self._get_backend_for_tenant(tenant)
+        return backend.query(vec, k)
+
+    def active_count(self, tenant: str | None = None) -> int:
+        with self._lock:
+            if tenant:
+                return self._get_backend_for_tenant(tenant).active_count()
+            return sum(idx.active_count() for idx in self._backends.values())
+
+    def indexed_ids(self, tenant: str | None = None) -> set[int]:
+        with self._lock:
+            if tenant:
+                return self._get_backend_for_tenant(tenant).indexed_ids()
+            return {mid for idx in self._backends.values() for mid in idx.indexed_ids()}
+
+    def persist(self, tenant: str | None = None) -> None:
+        with self._lock:
+            if tenant:
+                self._get_backend_for_tenant(tenant).persist()
+            else:
+                for idx in list(self._backends.values()):
+                    idx.persist()
+
+    @property
+    def dead_ratio(self) -> float:
+        with self._lock:
+            total_active = sum(idx.active_count() for idx in self._backends.values())
+            if total_active == 0:
+                return 0.0
+            total_dead_weight = sum(getattr(idx, "dead_ratio", 0.0) * idx.count for idx in self._backends.values())
+            total_elements = sum(idx.count for idx in self._backends.values())
+            return total_dead_weight / total_elements if total_elements > 0 else 0.0
+
+    def flush_all(self) -> None:
+        self.persist(None)
+
+    def close(self, tenant: str | None = None) -> None:
+        with self._lock:
+            if tenant:
+                self._backends.pop(tenant, None)
+            else:
+                self._backends.clear()
+
+    @property
+    def backend_count(self) -> int:
+        """Number of tenant backends currently loaded."""
+        with self._lock:
+            return len(self._backends)
+
+    def get_or_create(self, tenant: str) -> "HnswlibIndex | BruteForceIndex":
+        return self._get_backend_for_tenant(tenant)
+
+    def __repr__(self) -> str:
+        return f"<MultiTenantIndexRouter home={self._home} dim={self._dim} backends={len(self._backends)}>"
+
+
+def make_multi_tenant_router(home: Path, dim: int = 512, backend: str = "brute", ef_search: int = 64) -> MultiTenantIndexRouter:
+    """Helper for tests: build a router instance for direct unit testing."""
+    return MultiTenantIndexRouter(home, dim=dim, kind=backend, ef_search=ef_search)
