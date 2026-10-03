@@ -97,11 +97,21 @@ omnidb-server re-embed --embedder fastembed --yes   # migrate every memory to a 
 omnidb-server consolidate --dry-run --hours 48 # preview what consolidation would store
 omnidb-server compact --home D:/path/to/data   # force full vector-index rebuild
 python -m omnidb_server stats                  # includes pending_compaction, reconciled_at, WAL size
+omnidb-server tenants                          # list every tenant in the home with live/soft-deleted/superseded counts (operator view, read-only)
 omnidb-server check                            # FTS integrity, index drift, orphan edges, WAL size
 omnidb-server purge [--vacuum]                 # hard-delete soft-deleted rows; --vacuum reclaims space
 omnidb-server export D:/backup/memories.jsonl  # dump all memories + edges to JSONL
 omnidb-server import D:/backup/memories.jsonl  # restore from a JSONL dump
+omnidb-server serve-http --host 127.0.0.1 --port 8765  # opt-in multi-tenant HTTP MCP (loopback; refuses no-credential start)
+omnidb-server tenant-key                     # generate one API key + the config entry for serve-http
+omnidb-server doctor                         # environment health report as JSON (exit 4 on failure)
+omnidb-server init                           # create a home dir with a config template + sample memory
+omnidb-server skill export NAME out.zip      # bundle memories tagged metadata["skill"]=NAME
 ```
+
+Multi-tenant `serve-http` maps a bearer key to a tenant (no tool takes a `tenant_id` argument);
+single-tenant stdio runs as the implicit `default` tenant. See
+`docs/adr/ADR-08-multi-tenant-rebuild.md` and `docs/MULTI_TENANCY_THREAT_MODEL.md`.
 
 ## Configuration (environment)
 
@@ -133,11 +143,15 @@ re-run against your real corpus before drawing conclusions.
 
 ## Threat model
 
-OmniDB serves one agent session on one machine over stdio: there is no network
-listener, and the only outbound call is to the OpenAI-compatible endpoint *you*
-configure for consolidation (`llm_base_url`). Data at rest is plaintext SQLite
-plus the vector sidecar — use OS disk encryption for the stolen-disk threat
-model (see below).
+OmniDB runs stdio by default — one agent session per process, no network
+listener. `omnidb-server serve-http` adds an opt-in multi-tenant transport: a
+streamable-HTTP MCP listener (loopback by default) that verifies a per-request
+bearer key and resolves it to a tenant, and refuses to start with no
+credentials. If you enable it, that listener is an inbound surface you are
+exposing — bind it accordingly. In both transports the only *outbound* call is
+to the OpenAI-compatible endpoint *you* configure for consolidation
+(`llm_base_url`). Data at rest is plaintext SQLite plus the vector sidecar —
+use OS disk encryption for the stolen-disk threat model (see below).
 
 Residual risk to know about: consolidation sends your episode transcript to
 that endpoint and writes the model's returned facts into long-term memory.

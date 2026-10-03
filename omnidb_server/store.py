@@ -11,7 +11,7 @@ import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Iterator
 
 from .config import Config
 from .db import SCHEMA_VERSION, get_meta, set_meta
@@ -35,6 +35,33 @@ _QUERY_RESULT_BYTES_LIMIT = 32 * 1024 * 1024
 # AUDIT-I13: ceiling on the ids fetched/encoded per recovery batch; the
 # effective batch is min(this, the connection's variable limit - 2).
 _RECONCILE_BATCH_CAP = 500
+
+# BUG-A1-08: one batching policy for every `id IN (...)` site. The cap bounds
+# the work per statement; the reserve covers parameters a caller binds *beside*
+# the id list (remember_many binds a timestamp, forget_many binds one
+# deleted_ms, reconcile binds none).
+_ID_BATCH_CAP = 500
+_ID_BIND_RESERVE = 4
+
+
+def _id_chunks(ids: list[int], batch: int) -> Iterator[list[int]]:
+    """Split `ids` into chunks of at most `batch` elements.
+
+    BUG-A1-08 (checklist 10): SQLite caps bound parameters per statement
+    (SQLITE_LIMIT_VARIABLE_NUMBER, 32766 on stock builds), so every
+    ``id IN (...)`` site must batch. This is the one place the slicing
+    happens; ``MemoryStore._id_batch`` is the one place the chunk size is
+    derived from the connection's limit. Extracting both keeps the
+    arithmetic in a single helper instead of re-derived per call site.
+
+    A ``batch`` of 0 (or less) is floored to 1 rather than raising or
+    looping forever: a caller computing the size must never be able to turn
+    a large delete into a silent no-op via ``range(0, n, 0)``. An empty
+    input yields nothing, which is what every call site already assumed.
+    """
+    size = max(int(batch), 1)
+    for start in range(0, len(ids), size):
+        yield ids[start:start + size]
 
 # Error codes follow the design doc's OMN-* table (extended where the spec was silent)
 E_INTERNAL = "OMN-000"
@@ -185,7 +212,7 @@ class MemoryStore:
         self._check_consistency()
         if not read_only:
             self._recover_index_state()
-            set_meta(conn, "schema_version", "3")
+            set_meta(conn, "schema_version", str(SCHEMA_VERSION))
             set_meta(conn, "embedder", embedder.name)
             set_meta(conn, "vec_dim", str(embedder.dim))
             set_meta(conn, "vec_kind", index.kind)
@@ -260,10 +287,7 @@ class MemoryStore:
         indexed = self.index.indexed_ids()
         missing = sorted((live - indexed) | (self._pending_reembed & live))
         stale = sorted(indexed - live)
-        batch = max(1, min(_RECONCILE_BATCH_CAP, self.conn.getlimit(
-            sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER) - 2))
-        for start in range(0, len(missing), batch):
-            part = missing[start:start + batch]
+        for part in _id_chunks(missing, self._id_batch()):
             placeholders = ",".join("?" * len(part))
             rows = self.conn.execute(
                 f"SELECT id, content FROM memories WHERE id IN ({placeholders})",
@@ -271,9 +295,32 @@ class MemoryStore:
             ).fetchall()
             vectors = self.embedder.encode([r["content"] for r in rows])
             self.index.add([int(r["id"]) for r in rows], vectors)
-        for start in range(0, len(stale), batch):
-            self.index.remove(stale[start:start + batch])
+        for part in _id_chunks(stale, self._id_batch()):
+            self.index.remove(part)
         self._persist_index()
+
+    def _id_batch(self) -> int:
+        """The largest id list this connection can bind in one statement.
+
+        SQLite caps bound parameters per statement (SQLITE_LIMIT_VARIABLE_NUMBER,
+        32766 on stock builds), so every ``id IN (...)`` site must batch. The
+        reserve covers the extra parameters each caller binds alongside the id
+        list; the cap bounds the work per statement.
+
+        BUG-A1-08: forget_many and purge built an unbounded placeholder list, so
+        a home with more than the limit's worth of rows could not be purged at
+        all and forget_many failed for any caller passing more ids than the
+        limit. One helper, one place to get the arithmetic right.
+
+        The ceiling is ``min(_ID_BATCH_CAP, _RECONCILE_BATCH_CAP)`` so the
+        existing ``_RECONCILE_BATCH_CAP`` seam keeps working: AUDIT-I13's own
+        test monkeypatches that constant to 2 to prove recovery batches, and
+        introducing a second, independent cap silently disabled it.
+        """
+        return max(1, min(_ID_BATCH_CAP, _RECONCILE_BATCH_CAP,
+                          self.conn.getlimit(
+                              sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER)
+                          - _ID_BIND_RESERVE))
 
     # -- persistence plumbing ----------------------------------------------
 
@@ -378,7 +425,8 @@ class MemoryStore:
                  trigger_patterns: list[str] | None = None,
                  created_ms: int | None = None,
                  access_count: int | None = None,
-                 _explicit_id: int | None = None) -> dict:
+                 _explicit_id: int | None = None,
+                 tenant: str = "default") -> dict:
         # Single-item path is a one-liner on top of the batch path. The
         # batch path is what makes bulk import (and high-throughput
         # ingestion) viable — one commit, one embed call, one persist.
@@ -392,6 +440,7 @@ class MemoryStore:
             "created_ms": created_ms,
             "access_count": access_count,
             "_explicit_id": _explicit_id,
+            "tenant": tenant,
         }])
         return results[0]
 
@@ -416,6 +465,7 @@ class MemoryStore:
         created_mses: list[int] = []
         access_counts: list[int] = []
         explicit_ids: list[int | None] = []
+        tenants: list[str] = []
         prepared_links: list[list[tuple[int, str]]] = []
 
         for item in items:
@@ -457,14 +507,20 @@ class MemoryStore:
             created_mses.append(int(item.get("created_ms") or now_ms))
             access_counts.append(int(item.get("access_count") or 0))
             explicit_ids.append(item.get("_explicit_id"))
-            prepared_links.append(self._validate_links(item.get("links") or []))
+            # ADR-08: tenant is a validated id from the auth layer; the default
+            # keeps single-tenant deployments and every pre-tenant caller
+            # working unchanged.
+            tenants.append(str(item.get("tenant") or "default"))
+            prepared_links.append(self._validate_links(
+                item.get("links") or [], tenant=tenants[-1]))
 
         vectors = self.embedder.encode(contents)
 
         # Build the per-row INSERT statement. Always-on columns first
-        # (kind, content, metadata, created_ms, access_count); v2 columns
-        # (agent_id, trigger_patterns) and explicit id are added per row.
-        base_columns = ["kind", "content", "metadata", "created_ms", "access_count"]
+        # (kind, content, metadata, created_ms, access_count, tenant_id); v2
+        # columns (agent_id, trigger_patterns) and explicit id are per row.
+        base_columns = ["kind", "content", "metadata", "created_ms",
+                        "access_count", "tenant_id"]
         per_row_extra: list[list[tuple[str, object]]] = []
         for i in range(len(items)):
             extras: list[tuple[str, object]] = []
@@ -498,7 +554,8 @@ class MemoryStore:
         rows = []
         for i in range(len(items)):
             row: list[object] = [
-                kinds[i], contents[i], metadatas[i], created_mses[i], access_counts[i]
+                kinds[i], contents[i], metadatas[i], created_mses[i],
+                access_counts[i], tenants[i],
             ]
             row_dict = dict(zip(all_columns, row))
             for col, val in per_row_extra[i]:
@@ -524,6 +581,14 @@ class MemoryStore:
                         "VALUES (?, ?, ?, ?)",
                         (src, dst, label, now_ms),
                     )
+            # ADR-08 / W3-3: FTS sync is in-transaction, exactly as the removed
+            # triggers did. A crash between this and the commit cannot leave FTS
+            # and rows divergent, because they commit together.
+            for mid, content in zip(new_ids, contents):
+                self.conn.execute(
+                    "INSERT INTO memory_fts(rowid, content) VALUES (?, ?)",
+                    (int(mid), content),
+                )
             self.conn.commit()
         except sqlite3.Error as exc:
             # A failed batch must not leave partial rows behind: the next
@@ -538,9 +603,10 @@ class MemoryStore:
 
     @_serialized
     def update_memory(self, memory_id: int, content: str | None = None,
-                      metadata: dict | None = None) -> dict:
+                      metadata: dict | None = None,
+                      tenant: str = "default") -> dict:
         t0 = time.perf_counter()
-        row = self.get(memory_id)
+        row = self.get(memory_id, tenant)
         if row is None or row["deleted_ms"] is not None:
             raise StoreError(f"memory {memory_id} does not exist or is deleted", E_NOT_FOUND)
         updated: list[str] = []
@@ -582,9 +648,13 @@ class MemoryStore:
             sets.append("metadata = ?")
             params.append(new_metadata_json)
         params.append(memory_id)
+        # ADR-08: the tenant check is a hard equality, not just a pre-check via
+        # get() — a foreign row cannot be edited even if the id is guessed.
+        params.append(tenant)
         try:
             self.conn.execute(
-                f"UPDATE memories SET {', '.join(sets)} WHERE id = ?", params
+                f"UPDATE memories SET {', '.join(sets)} "
+                f"WHERE id = ? AND tenant_id = ?", params
             )
             if new_content is not None:
                 # AUDIT-I01: record the content revision in the SAME
@@ -596,6 +666,16 @@ class MemoryStore:
                     "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
                     (json.dumps(sorted(self._pending_reembed | {int(memory_id)})),),
                 )
+                # ADR-08 / W3-3: replace the FTS posting in the same
+                # transaction, matching what the removed `memories_au` trigger
+                # did (delete old content, insert new).
+                self.conn.execute(
+                    "DELETE FROM memory_fts WHERE rowid = ?", (int(memory_id),)
+                )
+                self.conn.execute(
+                    "INSERT INTO memory_fts(rowid, content) VALUES (?, ?)",
+                    (int(memory_id), new_content),
+                )
             self.conn.commit()
         except sqlite3.Error as exc:
             raise _commit_or_rollback(self.conn, exc) from exc
@@ -605,28 +685,41 @@ class MemoryStore:
         return _with_took({"id": memory_id, "updated": updated}, t0)
 
     @_serialized
-    def forget_many(self, memory_ids: list[int]) -> dict:
+    def forget_many(self, memory_ids: list[int],
+                    tenant: str = "default") -> dict:
         t0 = time.perf_counter()
         wanted = [int(m) for m in dict.fromkeys(memory_ids)]
         if not wanted:
             return _with_took({"forgotten": [], "missing": []}, t0)
-        placeholders = ",".join("?" * len(wanted))
-        live_rows = self.conn.execute(
-            f"SELECT id FROM memories WHERE id IN ({placeholders}) AND {_SELECTIVE}",
-            wanted,
-        ).fetchall()
-        forgotten = [int(r["id"]) for r in live_rows]
+        # BUG-A1-08: batch both statements. A caller passing more ids than the
+        # connection's variable limit previously raised outright; a home with
+        # more tombstoned rows than the limit could not be purged at all.
+        batch = self._id_batch()
+        forgotten: list[int] = []
+        for part in _id_chunks(wanted, batch):
+            placeholders = ",".join("?" * len(part))
+            # ADR-08: id-addressed mutation is tenant-scoped — a caller cannot
+            # tombstone another tenant's rows, no matter how many ids it names.
+            live_rows = self.conn.execute(
+                f"SELECT id FROM memories WHERE id IN ({placeholders}) "
+                f"AND {_SELECTIVE} AND tenant_id = ?",
+                [*part, tenant],
+            ).fetchall()
+            forgotten.extend(int(r["id"]) for r in live_rows)
         # AUDIT-I19: build the membership set once, not per wanted id.
         forgotten_set = set(forgotten)
         missing = [m for m in wanted if m not in forgotten_set]
         if not forgotten:
             return _with_took({"forgotten": [], "missing": missing}, t0)
-        ph = ",".join("?" * len(forgotten))
+        stamp = int(self.now_fn() * 1000)
         try:
-            self.conn.execute(
-                f"UPDATE memories SET deleted_ms = ? WHERE id IN ({ph}) AND {_SELECTIVE}",
-                [int(self.now_fn() * 1000), *forgotten],
-            )
+            for part in _id_chunks(forgotten, batch):
+                ph = ",".join("?" * len(part))
+                self.conn.execute(
+                    f"UPDATE memories SET deleted_ms = ? "
+                    f"WHERE id IN ({ph}) AND {_SELECTIVE}",
+                    [stamp, *part],
+                )
             self.conn.commit()
         except sqlite3.Error as exc:
             raise _commit_or_rollback(self.conn, exc) from exc
@@ -635,13 +728,16 @@ class MemoryStore:
         return _with_took({"forgotten": forgotten, "missing": missing}, t0)
 
     @_serialized
-    def link(self, src: int, dst: int, label: str = "related") -> None:
+    def link(self, src: int, dst: int, label: str = "related",
+             tenant: str = "default") -> None:
         try:
             src, dst = int(src), int(dst)
         except (TypeError, ValueError) as exc:
             raise StoreError("link endpoints must be integer memory ids", E_TYPE) from exc
+        # ADR-08: links only bind rows within one tenant, so a forged edge can
+        # never bridge two tenants (the door `related()` would otherwise open).
         for mid in (src, dst):
-            target = self.get(mid)
+            target = self.get(mid, tenant)
             if target is None or target["deleted_ms"] is not None:
                 raise StoreError(
                     f"memory {mid} does not exist or is deleted", E_CONSTRAINT
@@ -656,9 +752,9 @@ class MemoryStore:
             raise _commit_or_rollback(self.conn, exc) from exc
 
     @_serialized
-    def forget(self, memory_id: int) -> dict:
+    def forget(self, memory_id: int, tenant: str = "default") -> dict:
         t0 = time.perf_counter()
-        result = self.forget_many([memory_id])
+        result = self.forget_many([memory_id], tenant)
         if not result["forgotten"]:
             raise StoreError(
                 f"memory {memory_id} not found or already deleted", E_NOT_FOUND
@@ -666,12 +762,14 @@ class MemoryStore:
         return _with_took({"forgotten": memory_id}, t0)
 
     @_serialized
-    def supersede(self, old_id: int, new_id: int) -> dict:
+    def supersede(self, old_id: int, new_id: int,
+                  tenant: str = "default") -> dict:
         old_id, new_id = int(old_id), int(new_id)
         if old_id == new_id:
             raise StoreError("supersede endpoints must differ", E_TYPE)
+        # ADR-08: supersession, like linking, is within-tenant only.
         for mid in (old_id, new_id):
-            row = self.get(mid)
+            row = self.get(mid, tenant)
             if row is None or row["deleted_ms"] is not None:
                 raise StoreError(
                     f"memory {mid} does not exist or is deleted", E_NOT_FOUND
@@ -683,8 +781,9 @@ class MemoryStore:
         try:
             cur = self.conn.execute(
                 f"UPDATE memories SET superseded_by = ? "
-                f"WHERE id = ? AND superseded_by IS NULL AND {_SELECTIVE}",
-                (new_id, old_id),
+                f"WHERE id = ? AND tenant_id = ? "
+                f"AND superseded_by IS NULL AND {_SELECTIVE}",
+                (new_id, old_id, tenant),
             )
             self.conn.commit()
         except sqlite3.Error as exc:
@@ -695,7 +794,8 @@ class MemoryStore:
         self._after_commit(lambda: self.index.remove([old_id]), 1, compaction=True)
         return {"superseded": old_id, "by": new_id}
 
-    def _validate_links(self, links: list[dict]) -> list[tuple[int, str]]:
+    def _validate_links(self, links: list[dict],
+                        tenant: str = "default") -> list[tuple[int, str]]:
         prepared: list[tuple[int, str]] = []
         for link in links:
             if not isinstance(link, dict) or "to" not in link:
@@ -709,7 +809,10 @@ class MemoryStore:
                 raise StoreError(
                     f"link target {link['to']!r} is not an integer id", E_TYPE
                 ) from exc
-            target = self.get(dst)
+            # ADR-08: a link target must exist AND belong to the same tenant as
+            # the row being written, so a batch can never forge a cross-tenant
+            # edge through remember().
+            target = self.get(dst, tenant)
             if target is None or target["deleted_ms"] is not None:
                 raise StoreError(
                     f"link target {dst} does not exist or is deleted", E_CONSTRAINT
@@ -720,22 +823,37 @@ class MemoryStore:
     # -- reads -------------------------------------------------------------
 
     @_serialized
-    def get(self, memory_id: int) -> dict | None:
+    def get(self, memory_id: int, tenant: str = "default") -> dict | None:
+        # ADR-08: id-addressed reads are tenant-scoped, so a caller can never
+        # read another tenant's row by guessing or enumerating ids.
         row = self.conn.execute(
-            "SELECT * FROM memories WHERE id = ?", (memory_id,)
+            "SELECT * FROM memories WHERE id = ? AND tenant_id = ?",
+            (memory_id, tenant),
         ).fetchone()
         return _row_to_dict(row) if row else None
 
     @_serialized
     def recall(self, query: str, k: int = 5, kind: str | None = None,
                k_fetch: int | None = None, agent_id: str | None = None,
-               reranker: str | None = None) -> list[dict]:
+               reranker: str | None = None, tenant: str = "default") -> list[dict]:
         from .recall import run_recall
         return run_recall(self, query, k, kind, k_fetch, agent_id, reranker,
-                          log_query=self._query_log_enabled)
+                          log_query=self._query_log_enabled, tenant=tenant)
 
     @_serialized
-    def search(self, sql: str) -> dict:
+    def search(self, sql: str, tenant: str = "default") -> dict:
+        # ADR-08: raw SQL cannot be tenant-scoped safely — SQLite's authorizer
+        # sees column names, never predicate values, so a `WHERE` is invisible
+        # to it and `SELECT * FROM memories` would cross tenants. Fail closed:
+        # the escape hatch stays available on the single-tenant path (the CLI,
+        # and stdio, which both run as 'default'), and is refused for any
+        # credentialed tenant rather than silently leaking.
+        if tenant != "default":
+            raise StoreError(
+                "search is unavailable to scoped tenants; run it via the "
+                "single-tenant CLI where the whole home is one trust domain",
+                E_READ_ONLY,
+            )
         t0 = time.perf_counter()
         statement = " ".join(sql.split()).rstrip(";").strip()
         match = _SQL_FIRST_WORD.match(statement)
@@ -816,41 +934,48 @@ class MemoryStore:
 
     @_serialized
     def related(self, memory_id: int, max_hops: int = 2,
-                label: str | None = None) -> list[dict]:
+                label: str | None = None,
+                tenant: str = "default") -> list[dict]:
         # client-supplied hops are clamped: undirected recursion without visit
         # tracking is exponential even with modest depth
         hops = max(1, min(int(max_hops), 8))
         join_cond = "(e.src = walk.node OR e.dst = walk.node)"
-        # placeholder order: start node, seen-init, [label], depth limit, exclude-start
+        # placeholder order: start node, seen-init, [label], depth limit,
+        # tenant (fence), exclude-start, tenant (final)
         params: list = [memory_id, memory_id]
         if label is not None:
             join_cond += " AND e.label = ?"
             params.append(label)
-        params.append(hops)
+        params.extend([hops, tenant])
         rows = self.conn.execute(
             f"""
             WITH RECURSIVE walk(node, depth, seen) AS (
                 SELECT ?, 0, ',' || CAST(? AS TEXT) || ','
                 UNION ALL
-                SELECT CASE WHEN e.src = walk.node THEN e.dst ELSE e.src END,
+                SELECT n.id,
                        walk.depth + 1,
-                       walk.seen || CASE WHEN e.src = walk.node THEN e.dst ELSE e.src END || ','
-                FROM walk JOIN edges e ON {join_cond}
+                       walk.seen || CAST(n.id AS TEXT) || ','
+                FROM walk
+                JOIN edges e ON {join_cond}
+                JOIN memories n
+                  ON n.id = CASE WHEN e.src = walk.node THEN e.dst ELSE e.src END
                 WHERE walk.depth < ?
-                  AND instr(
-                        walk.seen,
-                        ',' || CAST(CASE WHEN e.src = walk.node
-                                         THEN e.dst ELSE e.src END AS TEXT) || ','
-                      ) = 0
+                  -- ADR-08: the walk never leaves the requesting tenant — a
+                  -- forged cross-tenant edge is refused at link() time, and
+                  -- even a historical one stops here because the neighbour is
+                  -- only followed when it belongs to this tenant.
+                  AND n.tenant_id = ?
+                  AND instr(walk.seen, ',' || CAST(n.id AS TEXT) || ',') = 0
             )
             SELECT m.id, m.kind, m.content, MIN(walk.depth) AS depth
             FROM walk JOIN memories m ON m.id = walk.node
             WHERE m.deleted_ms IS NULL AND m.superseded_by IS NULL AND m.id != ?
+              AND m.tenant_id = ?
             GROUP BY m.id, m.kind, m.content
             ORDER BY depth, m.id
             LIMIT 200
             """,
-            [*params, memory_id],
+            [*params, memory_id, tenant],
         ).fetchall()
         return [_row_to_dict(r) for r in rows]
 
@@ -890,31 +1015,47 @@ class MemoryStore:
         }
 
     @_serialized
-    def purge(self, do_vacuum: bool = False) -> dict:
+    def purge(self, do_vacuum: bool = False,
+              tenant: str = "default") -> dict:
         # DEBT-01: superseded-only rows were never purgeable and appeared in
         # no report. Capture the id set first, null their superseded_by
         # references (the FK has no cascade and purgees may reference each
         # other), then hard-delete by id.
         try:
+            # ADR-08: purge is tenant-scoped — a caller can only reclaim space
+            # for its own soft-deleted rows, never another tenant's.
             ids = [int(r[0]) for r in self.conn.execute(
                 "SELECT id FROM memories "
-                "WHERE deleted_ms IS NOT NULL OR superseded_by IS NOT NULL"
+                "WHERE (deleted_ms IS NOT NULL OR superseded_by IS NOT NULL) "
+                "AND tenant_id = ?",
+                (tenant,),
             ).fetchall()]
-            if ids:
-                ph = ",".join("?" * len(ids))
+            purged = 0
+            # BUG-A1-08: both statements batch. A home holding more purgeable
+            # rows than the connection's variable limit could not be purged at
+            # all — the placeholder list was built unbounded, so the statement
+            # raised and the operator had no way to reclaim the space.
+            batch = self._id_batch()
+            for part in _id_chunks(ids, batch):
+                ph = ",".join("?" * len(part))
                 self.conn.execute(
                     f"UPDATE memories SET superseded_by = NULL WHERE id IN ({ph})",
-                    ids,
+                    part,
+                )
+                # ADR-08 / W3-3: drop the FTS postings in the same transaction,
+                # matching what the removed `memories_ad` trigger did.
+                self.conn.execute(
+                    f"DELETE FROM memory_fts WHERE rowid IN ({ph})", part
                 )
                 cur = self.conn.execute(
-                    f"DELETE FROM memories WHERE id IN ({ph})", ids
+                    f"DELETE FROM memories WHERE id IN ({ph})", part
                 )
-            else:
+                purged += max(int(cur.rowcount), 0)
+            if not ids:
                 cur = self.conn.execute("SELECT 1 WHERE 0")
             self.conn.commit()
         except sqlite3.Error as exc:
             raise _commit_or_rollback(self.conn, exc) from exc
-        purged = max(int(cur.rowcount), 0)
         if do_vacuum:
             self.conn.execute("VACUUM")
             self.conn.commit()
@@ -936,14 +1077,25 @@ class MemoryStore:
         home = self._home()
 
         fresh: HnswlibIndex | BruteForceIndex
+        # BUG-A1-12: construct first, unlink after. The old order deleted the
+        # sidecar and then constructed its replacement, so a constructor
+        # failure (dim mismatch, hnswlib error) destroyed the only vector copy
+        # and forced a full re-embed. Building into a scratch path and
+        # publishing with os.replace makes a failed rebuild a no-op.
         if isinstance(self.index, HnswlibIndex):
-            hnsw_path = home / "index.hnsw"
-            hnsw_path.unlink(missing_ok=True)
-            (home / "index.hnsw.deleted.json").unlink(missing_ok=True)
-            fresh = HnswlibIndex(hnsw_path, dim, count_hint=len(rows),
+            scratch_path = home / "index.hnsw.rebuilding"
+            scratch_path.unlink(missing_ok=True)
+            (home / "index.hnsw.rebuilding.deleted.json").unlink(missing_ok=True)
+            fresh = HnswlibIndex(scratch_path, dim, count_hint=len(rows),
                                  ef_search=self.cfg.ef_search)
         else:
-            fresh = BruteForceIndex(home / "vectors.npz", dim)
+            scratch_path = home / "vectors.npz.rebuilding"
+            scratch_path.unlink(missing_ok=True)
+            fresh = BruteForceIndex(scratch_path, dim)
+        # remember where the scratch artifacts live so the swap can publish
+        # them under the canonical names once the build has succeeded
+        scratch_deleted = scratch_path.with_name(
+            scratch_path.name + ".deleted.json")
 
         self._mark_dirty()
         chunk = 512
@@ -951,6 +1103,31 @@ class MemoryStore:
             part = rows[start : start + chunk]
             vectors = self.embedder.encode([r["content"] for r in part])
             fresh.add([int(r["id"]) for r in part], vectors)
+        # Materialise the scratch artifacts BEFORE publishing. An index object
+        # writes nothing to disk until persist(), so replacing first would
+        # rename a file that does not exist yet.
+        fresh.persist()
+        # The build succeeded, so the scratch artifacts can be published under
+        # the canonical names. Until this point the previous sidecar was
+        # untouched and the home remained loadable.
+        canonical = (home / "index.hnsw") if isinstance(
+            self.index, HnswlibIndex) else (home / "vectors.npz")
+        os.replace(scratch_path, canonical)
+        if scratch_deleted.exists():
+            os.replace(scratch_deleted, canonical.with_name(
+                canonical.name + ".deleted.json"))
+        # the index object keeps writing to self.path, so repoint it at the
+        # published name before it becomes the live index. The tombstone
+        # sidecar must be repointed under its REAL attribute name: guarded by
+        # `hasattr(fresh, "deleted_path")` (no such attribute) the repoint was
+        # silently skipped, so every later persist() wrote tombstones to the
+        # scratch file while the canonical sidecar stayed empty — and the open
+        # path, which reads only the canonical name, resurrected every deleted
+        # row into dense results after a reopen.
+        fresh.path = canonical
+        if hasattr(fresh, "_deleted_path"):
+            fresh._deleted_path = canonical.with_name(
+                canonical.name + ".deleted.json")
         self.index = fresh
         self._persist_index()
         set_meta(self.conn, "compaction_due", "0")
@@ -961,23 +1138,31 @@ class MemoryStore:
     # -- introspection -----------------------------------------------------
 
     @_serialized
-    def stats(self) -> dict:
+    def stats(self, tenant: str = "default") -> dict:
         t0 = time.perf_counter()
+        # ADR-08: every tenant-scoped count is fenced — the audit's MT-02
+        # bypass exposed `agents` (and, by the same shape, `live`/`by_kind`) to
+        # any caller, so these now take an explicit tenant.
         kinds = {
             r["kind"]: r["n"]
             for r in self.conn.execute(
-                f"SELECT kind, COUNT(*) AS n FROM memories WHERE {_SELECTIVE} GROUP BY kind"
+                f"SELECT kind, COUNT(*) AS n FROM memories "
+                f"WHERE {_SELECTIVE} AND tenant_id = ? GROUP BY kind",
+                (tenant,),
             )
         }
         deleted = self.conn.execute(
-            "SELECT COUNT(*) FROM memories WHERE deleted_ms IS NOT NULL"
+            "SELECT COUNT(*) FROM memories WHERE deleted_ms IS NOT NULL "
+            "AND tenant_id = ?", (tenant,)
         ).fetchone()[0]
         agents = {
             r["agent_id"]: r["n"]
             for r in self.conn.execute(
                 f"SELECT agent_id, COUNT(*) AS n FROM memories "
                 f"WHERE agent_id IS NOT NULL AND {_SELECTIVE} "
-                f"GROUP BY agent_id ORDER BY n DESC, agent_id LIMIT 20"
+                f"AND tenant_id = ? "
+                f"GROUP BY agent_id ORDER BY n DESC, agent_id LIMIT 20",
+                (tenant,),
             )
         }
         files = {
@@ -986,6 +1171,7 @@ class MemoryStore:
             if p.is_file()
         }
         payload = {
+            "tenant": tenant,
             "live": sum(kinds.values()),
             "by_kind": kinds,
             "soft_deleted": deleted,
@@ -1005,6 +1191,44 @@ class MemoryStore:
             "took_ms": round((time.perf_counter() - t0) * 1000, 2),
         }
         return payload
+
+    @_serialized
+    def tenants(self) -> list[dict]:
+        """Every tenant that owns at least one row in this home, with live and
+        soft-deleted counts and a per-kind breakdown (ADR-08 observability).
+
+        This is the single-tenant-operator view — the CLI and a deployment owner
+        inspecting a home before they wire `serve-http`. It is deliberately NOT
+        exposed as an MCP tool: an authenticated tenant may only see its own rows
+        through `stats(tenant)`, never the roster of other tenants. It is pure
+        read-only SQL, so it takes no write lock and persists nothing.
+        """
+        rows = self.conn.execute(
+            "SELECT tenant_id, "
+            f"SUM(CASE WHEN {_SELECTIVE} THEN 1 ELSE 0 END) AS live, "
+            "SUM(CASE WHEN deleted_ms IS NOT NULL THEN 1 ELSE 0 END) AS soft_deleted, "
+            "SUM(CASE WHEN deleted_ms IS NULL AND superseded_by IS NOT NULL "
+            "THEN 1 ELSE 0 END) AS superseded, "
+            "COUNT(*) AS total "
+            "FROM memories GROUP BY tenant_id ORDER BY live DESC, tenant_id"
+        ).fetchall()
+        by_kind: dict[str, dict] = {}
+        for r in self.conn.execute(
+            f"SELECT tenant_id, kind, COUNT(*) AS n FROM memories "
+            f"WHERE {_SELECTIVE} GROUP BY tenant_id, kind"
+        ):
+            by_kind.setdefault(r["tenant_id"], {})[r["kind"]] = int(r["n"])
+        return [
+            {
+                "tenant": r["tenant_id"],
+                "live": int(r["live"]),
+                "soft_deleted": int(r["soft_deleted"]),
+                "superseded": int(r["superseded"]),
+                "total": int(r["total"]),
+                "by_kind": by_kind.get(r["tenant_id"], {}),
+            }
+            for r in rows
+        ]
 
     @_serialized
     def query_stats(self, hours: float = 24.0) -> dict:

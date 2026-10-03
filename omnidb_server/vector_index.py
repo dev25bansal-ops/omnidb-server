@@ -145,17 +145,31 @@ class HnswlibIndex:
         # deleted index would otherwise fail to fill k results).
         self._deleted_path = path.with_name(path.name + ".deleted.json")
         self.cap = max(64, int(count_hint) * 2)
-        self.index = hnswlib.Index(space="ip", dim=dim)
-        if path.exists():
-            self.index.load_index(str(path), max_elements=self.cap)
-            if self._deleted_path.exists():
-                self._deleted = {int(x) for x in json.loads(self._deleted_path.read_text())}
+        # F31: a corrupt sidecar raises RuntimeError from hnswlib (a C++
+        # std::runtime_error) and a corrupt tombstone sidecar raises ValueError from
+        # json.loads. Neither is a VectorIndexError, so after the F13 narrowing they
+        # propagated and crashed the open instead of falling back - the opposite of
+        # ARCH-04. Convert both, so "this index cannot be used" always arrives as
+        # VectorIndexError and the fallback keeps working.
+        try:
+            self.index = hnswlib.Index(space="ip", dim=dim)
+            if path.exists():
+                self.index.load_index(str(path), max_elements=self.cap)
+                if self._deleted_path.exists():
+                    self._deleted = {
+                        int(x) for x in json.loads(self._deleted_path.read_text())}
+                else:
+                    self._deleted = set()
             else:
+                self.index.init_index(
+                    max_elements=self.cap, ef_construction=ef_construction, M=m)
                 self._deleted = set()
-        else:
-            self.index.init_index(max_elements=self.cap, ef_construction=ef_construction, M=m)
-            self._deleted = set()
-        self.index.set_ef(max(ef_search, 16))
+            self.index.set_ef(max(ef_search, 16))
+        except VectorIndexError:
+            raise
+        except (RuntimeError, ValueError, OSError) as exc:
+            raise VectorIndexError(
+                f"hnsw sidecar unusable at {path.name} ({exc})") from exc
 
     @property
     def count(self) -> int:
@@ -172,17 +186,33 @@ class HnswlibIndex:
         total = self.count
         return len(self._deleted) / total if total else 0.0
 
-    def update(self, mid: int, vec) -> None:
-        # this hnswlib build treats a re-add of an existing label as an update
-        vec = np.ascontiguousarray([vec], dtype=np.float32)
-        self.index.add_items(vec, [int(mid)], num_threads=1)
+    def _ensure_capacity(self, incoming: int) -> None:
+        """Grow the hnswlib index so `incoming` more items fit.
 
-    def add(self, ids, vecs) -> None:
-        vecs = np.ascontiguousarray(vecs, dtype=np.float32)
-        needed = self.count + len(ids)
+        BUG-A1-11: only ``add`` grew the index, so a workload that grew the
+        corpus purely through ``update`` hit hnswlib's capacity error. Both
+        entry points share this now.
+        """
+        needed = self.count + incoming
         if needed > self.cap:
             self.cap = max(needed * 2, self.cap * 2)
             self.index.resize_index(self.cap)
+
+    def update(self, mid: int, vec) -> None:
+        # this hnswlib build treats a re-add of an existing label as an update
+        mid = int(mid)
+        # A label already present replaces its vector and does NOT grow the
+        # index; only a genuinely new label needs capacity. Reserving
+        # unconditionally would double the graph on every content revision,
+        # which is the common case for an update-heavy workload.
+        if mid not in self.index:
+            self._ensure_capacity(1)
+        vec = np.ascontiguousarray([vec], dtype=np.float32)
+        self.index.add_items(vec, [mid], num_threads=1)
+
+    def add(self, ids, vecs) -> None:
+        vecs = np.ascontiguousarray(vecs, dtype=np.float32)
+        self._ensure_capacity(len(ids))
         self.index.add_items(vecs, [int(i) for i in ids], num_threads=1)
 
     def remove(self, ids) -> None:

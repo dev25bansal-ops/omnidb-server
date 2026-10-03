@@ -130,7 +130,7 @@ that survives total `omnidb.db` loss.
 ## Upgrades
 
 - Schema migrations are forward-only and run automatically on first open:
-  `PRAGMA user_version` tracks the applied head (currently 3) and each open
+  `PRAGMA user_version` tracks the applied head (currently 5) and each open
   applies pending migrations in order, with gap detection.
 - Upgrade = install the new package and open the home; no manual step.
 - **Downgrade is unsupported and now enforced**: a home whose schema version

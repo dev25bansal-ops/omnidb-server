@@ -5,213 +5,120 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.3] — 2026-09-20
+## [Unreleased]
+
+### Added
+
+- Tenant observability for operators: `MemoryStore.tenants()` returns the home's full tenant roster with live/soft-deleted/superseded/total counts and per-kind breakdown. `omnidb-server tenants` exposes it as a read-only CLI command; this is the single-tenant-operator view, deliberately not an MCP tool (scoped tenants cannot enumerate other tenants via the server).
+- Multi-tenant streamable-HTTP transport: `omnidb-server serve-http` plus a
+  per-request bearer-key authenticator (`omnidb_server.tenancy`,
+  `omnidb_server.http_server`; ADR-08). Each key resolves to a tenant; no tool
+  accepts a `tenant_id` argument.
+- `omnidb-server tenant-key` to mint one API key and print its config entry.
+- Per-tenant FTS5 table lifecycle (`omnidb_server.tenant_schema`): create/drop
+  atomically with a registration marker, one `fts_<tenant>` table per tenant.
+
+### Changed
+
+- Schema v5: the FTS5 `memories_ai/ad/au` triggers are replaced by explicit
+  in-transaction FTS sync in the store write path (ADR-08 / W3-3).
+- Schema v4: `tenant_id` column on `memories` and `queries`, defaulting to the
+  single tenant so pre-tenant homes keep working unchanged.
+- `vector_index` now converts a corrupt HNSW/tombstone sidecar to
+  `VectorIndexError` (F31), so "this index is unusable" always reaches the
+  documented brute-force fallback.
 
 ### Fixed
 
-- `pyproject.toml`: removed the unregistered `Framework :: MCP :: Server`
-  trove classifier, which failed `python -m build` metadata validation and
-  blocked the 0.1.3 wheel/sdist build (the stale 0.1.0 wheel predated it).
-- `reembed_home` now acquires the home lock BEFORE `db.connect` (which runs
-  migrations/WAL pragmas), closing the last writable-init-before-ownership
-  path (AUDIT-I02); the pre-ownership connection is also closed on every
-  early-failure path (AUDIT-I20). `examples/demo.py` uses the shared
-  `open_owned_store` helper.
+- Duplicate, unguarded HNSW index construction in `HnswlibIndex.__init__`
+  (each open built the graph twice and masked the F31 guard).
+
+### Security
+
+- `serve-http` fails closed at startup with no tenant credentials, and a
+  request with an absent/malformed/unknown key is rejected with 401 (no
+  default-tenant fallback).
+
+## [0.1.3] — 2026-09-20
+
+<!-- 0.1.3 was assembled from four separate remediation batches, each of which
+     had pasted its own Added/Changed/Fixed/Security blocks under this heading. They
+     are merged here into one block per category, entry order preserved within each.
+     60 entries total: 21 Added, 16 Changed, 21 Fixed, 2 Security. -->
 
 ### Added
 
 - `bench/soak.py --workload growth --growth-cap N`: a separate monotonic
-  scaling experiment (live set grows without forgets; every recall tagged
-  with the live count, reported per size bucket, no pass/fail gate) closing
-  the I12 protocol gap; evidence in `bench/growth-results.txt`.
 - `omnidb-server doctor` gained a read-only `recovery` check that surfaces
-  pending healing work (`index_dirty`, `pending_reembed`, `reembed_pending`,
-  `compaction_due`) so operators can see what the next open will reconcile
-  from rows; informational only, never fails the report.
 - Operations docs now state the lock-free diagnostic set vs lock-requiring
-  commands, the 1 s maintenance loop, dirty-marked backups, enforced
-  downgrade rejection, and in-place `re-embed`; historical coverage/perf
-  reports are labeled with their post-remediation successors.
-
-### Fixed (Sep 2026 audit remediation, `docs/AUDIT.md`)
-
-- Content updates encode before the SQL mutation and record a durable
-  `pending_reembed` revision in the same transaction; startup reconciliation
-  heals same-ID content/vector divergence at every interruption boundary (I01).
-- The home lock is acquired before any writable initialization in the server
-  and every writable CLI command; rejected openers perform zero persistence;
-  lifecycle cleanup releases each resource in its own `finally` (I02, I20).
-- Backup snapshots carry `index_dirty=1`; re-embedding publishes identity
-  atomically behind a durable migration marker, so interrupted migrations
-  (including same-dimension model swaps) rebuild consistently (I03).
-- JSONL import preserves original ids and edge endpoints, validates every
-  record before the first write, and rolls back completely on rejection (I04).
-- `search` budgets VM instructions (not callbacks), adds a monotonic deadline
-  and a result byte cap, and cleans up handlers on all exits (I05).
-- Trigger patterns are bounded at admission (count/length) and at matching
-  (query size, per-recall evaluations) (I06, I21).
-- Batch inserts capture each row's actual id; recall filters share one
-  kind/scope contract and filter before truncation; torn v2 migrations heal
-  per-column; future schema versions are rejected; consolidation facts carry
-  per-chunk provenance and agent scope; recovery runs in bounded batches;
-  idle dirty vectors flush within `persist_max_s`; `forget_many` builds its
-  membership set once; config coercion is strict (I07–I19, I21).
-- CI runs a required HNSW job with skips-as-failures, collects branch
-  coverage with an 80% floor, and the soak harness is steady-state with
-  revision-bound metrics (I12, I14).
-
-### Added
-
 - `schema` MCP tool and CLI command (E-06): tables, column notes, and
-  copy-runnable example queries for the `search` escape hatch.
 - Shell-facing `omnidb-server recall` and `remember` commands (E-07) — the
-  real hybrid retrieval path, runnable by humans for debugging.
 - One-line serve startup banner on stderr: home, live memories, embedder,
-  index kind, cold start, pid (E-07).
 - `omnidb-server config` (E-15): the effective configuration with each
-  value's source (`default` / toml path / `env:OMNIDB_*`), `llm_api_key`
-  redacted. Config values are range-validated on load and fail with a named
-  key instead of misbehaving downstream.
 - Chunked consolidation with `dry_run` (E-12): extraction runs one LLM call
-  per `consolidation_chunk_episodes` (default 10); a failed chunk is
-  reported and retried alone while successful chunks commit; dry-run
-  previews what would be written (MCP tool param and `--dry-run`).
 - `omnidb-server backup DEST [--keep N]` (E-13): hot, crash-consistent
-  physical backup via SQLite's online backup API plus the vector sidecars,
-  into timestamped snapshot directories with rotation.
 - `omnidb-server re-embed --embedder fastembed [--model ...] [--yes]`
-  (E-01): migrate an existing home to a new embedder in place — re-encodes
-  all live rows into a fresh sidecar and re-pins the stored identity last,
-  so every crash window heals through reconciliation. This replaces the
-  "switching embedders requires a fresh home" limitation.
-
-### Fixed
-
-- Consolidation marked every fetched episode as consumed while distilling at
-  most 50 facts; in offline-stub mode episodes 51+ were permanently skipped
-  without ever being distilled. Marking now covers exactly the consumed
-  episodes (the full transcript for the LLM path, the distilled prefix for
-  the stub).
-- One oversized episode blocked the whole consolidation queue forever
-  (`_fit_episode_budget` broke instead of skipping); oversized episodes are
-  now skipped and reported as `episodes_skipped`.
-- A failed `remember_many` (e.g. duplicate explicit id) left partial rows in
-  an open transaction that the next unrelated operation committed, with no
-  vectors in the index. All write paths now roll back and raise a typed
-  `[OMN-005]`/`[OMN-000]` error.
-- Concurrent MCP tool calls no longer hang or crash: tool bodies share one
-  sqlite connection, and `search`'s connection-global authorizer/progress
-  handler could deadlock a concurrent write (observed as a multi-minute
-  hang) while concurrent batch writes crashed on the id read-back. Every
-  public store operation now runs under a store-wide reentrant lock.
-- The documented `OMNIDB_INDEX` environment variable was read by nothing
-  (the config layer only derives `OMNIDB_VECTOR_INDEX`); it is now honored
-  as an alias, with the native variable winning when both are set.
-- `related()` no longer returns superseded memories.
-- `supersede` rejects a new_id that is itself already superseded, closing
-  the A→B→A cycle that made both rows vanish from the live set.
-- Schema migrations are now atomic (DDL + `user_version` bump in one
-  transaction); a crash mid-upgrade no longer bricks the home, and homes
-  already bricked by the old runner heal on the next open.
-- LangGraph adapter `put` is now an upsert (previously duplicated rows and
-  `get` kept returning the stale value).
-- Both framework adapters scope reads and writes to an `agent_id`
-  (`"langgraph"` / `"llamaindex"`); LlamaIndex `clear()` no longer deletes
-  the entire store across all agents and kinds.
+- Query-log observability: opt-in `query_log` config records every recall/search
+- Skill bundles: export/import/list procedural-skill memories as zip bundles
+- Framework adapters for LangGraph and LlamaIndex wiring OmniDB in as agent
+- `doctor` and `init` CLIs for diagnosing a home and bootstrapping one.
+- Ollama autodetect: with `ollama_autodetect` on, consolidation probes the
+- `py.typed` marker shipped in the package.
+- `cold_start_ms` reported in `stats()`, plus a `OMNIDB_COLD_START_BUDGET_MS`
+- README 10-second test section; performance report at `docs/perf-report.md`;
+- Fusion property tests (hypothesis) covering the pure scoring surface.
+- Concurrent-serve test covering multi-process contention on one home.
+- LLM-load responsiveness test asserting slow LLM calls cannot stall the stdio
 
 ### Changed
 
 - Post-commit write ordering lives in one place (`MemoryStore._after_commit`,
-  ARCH-02): dirty flag first, then the index mutation, then compaction
-  scheduling, then the debounced persist. All five write paths (remember_many,
-  update_memory, forget_many, supersede, bulk import) share it, so a future
-  write method cannot get the crash-window order wrong.
 - `ef_search` is a config knob (`OMNIDB_EF_SEARCH`, PERF-07), honored by hnsw
-  opens and rebuilds down to a floor of 16.
 - Agent-scoped recall over-fetches the dense leg by `agent_overfetch`
-  (default 3.0, PERF-08) so one dominant agent cannot crowd a scoped recall
-  below k; the cap keeps placeholders bounded.
 - Wheel ships only `omnidb_server` (DEBT-02): tests/docs/bench/scripts stay
-  in the sdist, so installing no longer creates top-level `tests`/`docs`
-  packages that collide on sys.path.
 - mypy gate is green and runs in CI (QA-05); store/recall/consolidate/server
-  internals are typed, and the lenient `[tool.mypy]` config is documented.
+- Sidecar persistence policy (PERF-01): the time-based flush no longer dumps
+- Brute-force index stores vectors in a capacity-doubling buffer (PERF-02):
+- Recall's skill-trigger scan is two-phase (PERF-03): match on
+- Recall commits once (PERF-04): the access bump and the query-log row share
+- Query-log retention (PERF-05): `query_retention_rows` (default 100k) prunes
+- Home lock is a real OS-level advisory lock on every platform — flock on
+- `purge()` hard-deletes superseded-only rows too (they were previously
+- `recall` clamps `k`/`k_fetch` (max 1000) instead of crashing on SQLite's
+- A corrupt hnsw sidecar now says why on stderr before falling back to the
+- Version and docs sync: pyproject/package version aligned to 0.1.3;
+- Server WAL-checkpoint loop goes through `MemoryStore.checkpoint()` so it
+
+### Fixed
+
+- `pyproject.toml`: removed the unregistered `Framework :: MCP :: Server`
+- `reembed_home` now acquires the home lock BEFORE `db.connect` (which runs
+- Content updates encode before the SQL mutation and record a durable
+- The home lock is acquired before any writable initialization in the server
+- Backup snapshots carry `index_dirty=1`; re-embedding publishes identity
+- JSONL import preserves original ids and edge endpoints, validates every
+- `search` budgets VM instructions (not callbacks), adds a monotonic deadline
+- Trigger patterns are bounded at admission (count/length) and at matching
+- Batch inserts capture each row's actual id; recall filters share one
+- CI runs a required HNSW job with skips-as-failures, collects branch
+- Consolidation marked every fetched episode as consumed while distilling at
+- One oversized episode blocked the whole consolidation queue forever
+- A failed `remember_many` (e.g. duplicate explicit id) left partial rows in
+- Concurrent MCP tool calls no longer hang or crash: tool bodies share one
+- The documented `OMNIDB_INDEX` environment variable was read by nothing
+- `related()` no longer returns superseded memories.
+- `supersede` rejects a new_id that is itself already superseded, closing
+- Schema migrations are now atomic (DDL + `user_version` bump in one
+- LangGraph adapter `put` is now an upsert (previously duplicated rows and
+- Both framework adapters scope reads and writes to an `agent_id`
+- Stale foundation test asserted schema v2 after the queries table moved the
 
 ### Security
 
 - Consolidation facts carry `origin: "consolidation"`, `source_episodes`, and
-  `confidence` metadata so LLM-distilled content is auditable and filterable
-  via `search` (SEC-01); `consolidation_min_confidence` (default 0.0) drops
-  facts the model itself rates below a floor. README gained a threat-model
-  section covering the poisoning residual risk.
 - `remember` bounds content at `max_content_chars` (default 100k, SEC-04) and
-  rejects non-string content with typed errors.
 
-### Changed
-
-- Sidecar persistence policy (PERF-01): the time-based flush no longer dumps
-  the whole vector index once per slow write — it now requires a minimum of
-  pending ops (`persist_min_ops`, default 8) and an interval scaled by the
-  last flush's own duration, with `persist_max_s` (default 5 s) as the
-  durability ceiling. Sustained single-write throughput no longer collapses
-  at large index sizes.
-- Brute-force index stores vectors in a capacity-doubling buffer (PERF-02):
-  single-row adds amortize to O(1) instead of copying the whole matrix.
-- Recall's skill-trigger scan is two-phase (PERF-03): match on
-  (id, trigger_patterns) with a bounded compiled-regex cache, then fetch full
-  rows only for matches; procedural content no longer moves on every recall.
-- Recall commits once (PERF-04): the access bump and the query-log row share
-  a single transaction, and a log-free recall with no results writes nothing.
-- Query-log retention (PERF-05): `query_retention_rows` (default 100k) prunes
-  the `queries` table periodically while logging; the enable flag is plain
-  store state instead of a module-level id(conn) set (ARCH-03).
-- Home lock is a real OS-level advisory lock on every platform — flock on
-  POSIX, msvcrt byte-range on Windows (ARCH-05). It releases on process
-  death, stale files are harmless, `serve` propagates its lock-conflict exit
-  code (3) through the CLI, and `doctor` probes the lock instead of checking
-  file existence.
-- `purge()` hard-deletes superseded-only rows too (they were previously
-  un-purgeable and invisible in every report — DEBT-01); `check()` reports
-  a `superseded` count.
-- `recall` clamps `k`/`k_fetch` (max 1000) instead of crashing on SQLite's
-  variable limit (BUG-12); unknown reranker names raise typed `[OMN-002]`
-  errors (QA-02); non-JSON-serializable metadata is rejected typed and early.
-- A corrupt hnsw sidecar now says why on stderr before falling back to the
-  brute-force backend (ARCH-04).
-- Version and docs sync: pyproject/package version aligned to 0.1.3;
-  operations guide lock-file name corrected to `.lock`.
-- Server WAL-checkpoint loop goes through `MemoryStore.checkpoint()` so it
-  cannot interleave with the search authorizer.
-
-### Added
-
-- Query-log observability: opt-in `query_log` config records every recall/search
-  into a `queries` table (schema v3), with a `query-log` CLI dump and
-  `query_stats()` aggregation (counts, avg/max latency by kind, top queries).
-- Skill bundles: export/import/list procedural-skill memories as zip bundles
-  (`manifest.json` + memories) via `omnidb_server.skills`.
-- Framework adapters for LangGraph and LlamaIndex wiring OmniDB in as agent
-  memory.
-- `doctor` and `init` CLIs for diagnosing a home and bootstrapping one.
-- Ollama autodetect: with `ollama_autodetect` on, consolidation probes the
-  local Ollama endpoint (1.5 s budget) and adopts the first listed model.
-- `py.typed` marker shipped in the package.
-- `cold_start_ms` reported in `stats()`, plus a `OMNIDB_COLD_START_BUDGET_MS`
-  stderr tripwire on slow opens.
-- README 10-second test section; performance report at `docs/perf-report.md`;
-  operations guide at `docs/operations.md`; tag-driven PyPI release workflow
-  with a PR dry-run build job.
-- Fusion property tests (hypothesis) covering the pure scoring surface.
-- Concurrent-serve test covering multi-process contention on one home.
-- LLM-load responsiveness test asserting slow LLM calls cannot stall the stdio
-  event loop.
-
-### Fixed
-
-- Stale foundation test asserted schema v2 after the queries table moved the
-  schema head to v3.
-
-## [Unreleased]
+## [0.1.3] — expanded notes
 
 ### Added
 

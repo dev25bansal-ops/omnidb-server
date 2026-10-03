@@ -27,7 +27,19 @@ def main(argv: list[str] | None = None) -> int:
     common.add_argument("--home", default=argparse.SUPPRESS)
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("serve", parents=[common], help="run the MCP stdio server")
+    p_http = sub.add_parser("serve-http", parents=[common],
+                            help="run a multi-tenant streamable-HTTP MCP server "
+                                 "(requires tenant credentials)")
+    p_http.add_argument("--host", default="127.0.0.1",
+                        help="bind address (default loopback; a wildcard bind is "
+                             "an explicit, auditable choice)")
+    p_http.add_argument("--port", type=int, default=8765)
+    sub.add_parser("tenant-key", parents=[common],
+                   help="generate a tenant API key and its config entry")
     sub.add_parser("stats", parents=[common], help="print database statistics as JSON")
+    sub.add_parser("tenants", parents=[common],
+                   help="list every tenant in the home with live/soft-deleted counts "
+                        "(single-tenant operator view; read-only)")
     sub.add_parser("compact", parents=[common],
                    help="force a full vector-index rebuild (compaction / repair)")
     p_consol = sub.add_parser("consolidate", parents=[common],
@@ -97,7 +109,7 @@ def main(argv: list[str] | None = None) -> int:
                               help="restore a JSONL export into an empty home")
     p_import.add_argument("path")
     sub.add_parser("doctor", parents=[common],
-                   help="print an environment health report as JSON (always exits 0)")
+                   help="print an environment health report as JSON (exit 4 on failure)")
     sub.add_parser("init", parents=[common],
                    help="create a home directory with a config template and a sample memory")
     p_skill = sub.add_parser("skill", parents=[common],
@@ -109,13 +121,19 @@ def main(argv: list[str] | None = None) -> int:
                                                "metadata[\"skill\"] = NAME into a zip")
     p_skill_export.add_argument("name")
     p_skill_export.add_argument("path")
+    p_skill_export.add_argument("--tenant", default=None,
+                                  help="tenant to export (default: the single tenant)")
     p_skill_import = skill_sub.add_parser("import", parents=[common],
                                           help="import a skill bundle zip")
     p_skill_import.add_argument("path")
     p_skill_import.add_argument("--overwrite", action="store_true",
                                 help="replace memories already tagged with this skill")
-    skill_sub.add_parser("list", parents=[common],
-                         help="list imported skills with memory counts")
+    p_skill_import.add_argument("--tenant", default=None,
+                                  help="tenant to import into (default: the single tenant)")
+    p_skill_list = skill_sub.add_parser("list", parents=[common],
+                                   help="list imported skills with memory counts")
+    p_skill_list.add_argument("--tenant", default=None,
+                              help="tenant to list (default: the single tenant)")
     p_qstats = sub.add_parser("query-stats", parents=[common],
                               help="aggregate the query log over a trailing window")
     p_qstats.add_argument("--hours", type=float, default=24.0,
@@ -130,11 +148,17 @@ def main(argv: list[str] | None = None) -> int:
 
             return serve(home)  # propagate the lock-conflict exit code (3)
 
+        if args.command == "tenant-key":
+            return _cmd_tenant_key(home)
+
+        if args.command == "serve-http":
+            return _cmd_serve_http(home, args.host, args.port)
+
         if args.command == "doctor":
-            # informational: always exit 0, the JSON body carries per-check status
             from .doctor import run_doctor
-            print(json.dumps(run_doctor(home), indent=2))
-            return 0
+            report = run_doctor(home)
+            print(json.dumps(report, indent=2))
+            return 0 if report["ok"] else 4
 
         if args.command == "init":
             return _cmd_init(home)
@@ -187,7 +211,7 @@ def main(argv: list[str] | None = None) -> int:
         # goes through the owned-stack helper and is refused BEFORE any
         # mutable initialization when another process holds the home.
         if args.command in ("query-stats", "stats", "schema", "export",
-                           "query-log"):
+                   "query-log", "tenants"):
             store = open_read_only_store(cfg)
             try:
                 if args.command == "query-stats":
@@ -211,6 +235,8 @@ def main(argv: list[str] | None = None) -> int:
                         (args.limit,),
                     ).fetchall()
                     print(json.dumps([dict(r) for r in rows], indent=2))
+                elif args.command == "tenants":
+                    print(json.dumps(store.tenants(), indent=2))
             finally:
                 store.close()
             return 0
@@ -275,6 +301,59 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
+def _cmd_tenant_key(home: str | None) -> int:
+    """Generate one tenant API key and print the config the operator pastes in.
+
+    The plaintext key is printed exactly once. Only its digest should be
+    persisted (in `tenants` or `<home>/tenants.json`); the key itself is a
+    bearer credential and must not be logged.
+    """
+    from .tenancy import hash_key, new_key
+
+    key = new_key()
+    print(json.dumps({
+        "api_key": key,
+        "warning": "print this once, store only the digest",
+        "config_entry": f'tenants = {{ "{key}": "<tenant-name>" }}',
+        "digest": hash_key(key),
+    }, indent=2))
+    return 0
+
+
+def _cmd_serve_http(home: str | None, host: str, port: int) -> int:
+    """Serve the multi-tenant HTTP transport.
+
+    Owns the home like `serve` does, then resolves tenant credentials and runs
+    the streamable-HTTP MCP server. Refuses to start without credentials. A
+    wildcard bind is permitted, because the operator has to type it — the
+    default is loopback.
+    """
+    from .config import Config
+    from .http_server import build_registry, run_http
+    from .server import _acquire_home_lock, _release_home_lock, build_stack
+
+    cfg = Config.from_env(home)
+    lock_fd = _acquire_home_lock(cfg.home)
+    if isinstance(lock_fd, OSError):
+        print(
+            f"omnidb-server: error: another process is using {cfg.home}: {lock_fd}",
+            file=sys.stderr,
+        )
+        return 3
+    try:
+        store = build_stack(cfg)
+    except BaseException:
+        _release_home_lock(lock_fd)
+        raise
+    try:
+        # fails closed: no credentials is a refused start, not a warning
+        registry = build_registry(cfg.home, getattr(cfg, "tenants", None))
+        run_http(store, registry, host=host, port=port)
+    finally:
+        _release_home_lock(lock_fd)
+    return 0
+
+
 def _cmd_init(home: str | None) -> int:
     from pathlib import Path
 
@@ -325,15 +404,25 @@ _TOML_TEMPLATE = """\
 """
 
 
+def _tenant_of(args) -> str:
+    """The tenant a skill command runs against; None means this deployment's
+    single tenant, which is what a local operator without credentials gets."""
+    from .tenancy import DEFAULT_TENANT
+
+    return args.tenant or DEFAULT_TENANT
+
+
 def _cmd_skill(store, args) -> int:
     from .skills import export_skill, import_skill, list_skills
 
     if args.skill_command == "export":
-        print(json.dumps(export_skill(store, args.name, args.path), indent=2))
+        print(json.dumps(export_skill(store, args.name, args.path,
+                                  tenant=_tenant_of(args)), indent=2))
     elif args.skill_command == "import":
-        print(json.dumps(import_skill(store, args.path, overwrite=args.overwrite), indent=2))
+        print(json.dumps(import_skill(store, args.path, overwrite=args.overwrite,
+                                  tenant=_tenant_of(args)), indent=2))
     elif args.skill_command == "list":
-        print(json.dumps(list_skills(store), indent=2))
+        print(json.dumps(list_skills(store, tenant=_tenant_of(args)), indent=2))
     return 0
 
 
