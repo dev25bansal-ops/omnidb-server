@@ -35,6 +35,7 @@ import json
 import re
 import sqlite3
 import tempfile
+import unicodedata
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -70,10 +71,23 @@ def _reference_fts_expression(text: str, max_terms: int = 24) -> str:
     characters in the lowercased text, first ``max_terms`` of them) using
     ``str.isalnum``/``"_"``, which is what ``\\w`` means in Python 3 for str
     patterns.
+
+    The fold mirrors ``fusion._fold``'s Unicode rule, which this oracle
+    originally missed: ``str.lower()`` can *expand* a character (``"İ"``
+    lowercases to ``i`` + U+0307 combining dot), and the implementation drops
+    marks that are a by-product of that expansion so the token does not split.
+    Without the mirror, ``text="İ0"`` produced ``"i0"`` from the implementation
+    and ``["i", "0"]`` here — a second stale-copy drift of the same kind C1 was,
+    found by Hypothesis rather than by inspection.
     """
+    lowered = text.lower()
+    if len(lowered) != len(text):
+        # .lower() expanded, so at least one character folded to more than one
+        # code point; drop the combining marks it introduced.
+        lowered = "".join(c for c in lowered if not unicodedata.combining(c))
     tokens: list[str] = []
     current: list[str] = []
-    for ch in text.lower():
+    for ch in lowered:
         if ch == "_" or ch.isalnum():
             current.append(ch)
         elif current:
@@ -487,3 +501,21 @@ def test_import_jsonl_accepts_admissible_patterns(patterns):
             assert json.loads(row[0]) == list(patterns)
         finally:
             target.close()
+
+
+def test_fts_oracle_mirrors_the_unicode_fold():
+    """A lower() expansion must not split a token in the oracle.
+
+    Found by Hypothesis rather than inspection, and the second drift of the same
+    kind as C1: the oracle restated the tokenizer but not the Unicode rule.
+    `"İ".lower()` is two code points (`i` + U+0307), so a naive scan sees two
+    tokens where the implementation sees one. Production is correct — its fold
+    is documented at fusion._fold — so the oracle is what moves.
+    """
+    assert fts_match_query("İ0") == '"i0"'
+    assert _reference_fts_expression("İ0", 24) == '"i0"'
+
+    # A mark that was ALREADY in the source is not a by-product of lower() and
+    # must survive, which is the other half of the same rule.
+    decomposed = "ñ"          # n + U+0303
+    assert fts_match_query(decomposed) == _reference_fts_expression(decomposed, 24)

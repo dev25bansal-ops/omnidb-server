@@ -9,6 +9,19 @@ from .consolidate import run_consolidation
 from .server import open_owned_store, open_read_only_store
 
 
+def _group_tenants(tenants: dict) -> dict[str, list]:
+    """Group a key -> tenant map into tenant -> [keys], for redacted display.
+
+    Only the grouping is used; the keys are counted, never rendered. Used by the
+    `config` report so an operator can still see which tenants a deployment
+    serves without the report becoming a credential dump (audit R2).
+    """
+    grouped: dict[str, list] = {}
+    for key, tenant in tenants.items():
+        grouped.setdefault(tenant, []).append(key)
+    return grouped
+
+
 def main(argv: list[str] | None = None) -> int:
     if argv is None:
         argv = sys.argv[1:]
@@ -176,12 +189,29 @@ def main(argv: list[str] | None = None) -> int:
             cfg, sources = Config.load_detailed(home)
             values = asdict(cfg)
             values["home"] = str(cfg.home)
+            redacted: list[str] = []
             if values.get("llm_api_key"):
                 values["llm_api_key"] = "***set***"
+                redacted.append("llm_api_key")
+            # `tenants` is a key -> tenant map whose keys ARE the live bearer
+            # credentials for serve-http. Reporting it verbatim printed working
+            # keys into whatever the operator pasted the output into, and the
+            # redaction list said nothing had been hidden (audit R2). Report
+            # which tenants exist and how many keys each has, never the keys —
+            # the operator can count their own credentials, and the tenant names
+            # are the part they actually need to see.
+            tenants = values.get("tenants") or {}
+            if tenants:
+                values["tenants"] = {
+                    tenant: [f"<redacted key {i + 1} of {len(keys)}>"
+                             for i in range(len(keys))]
+                    for tenant, keys in sorted(_group_tenants(tenants).items())
+                }
+                redacted.append("tenants")
             print(json.dumps({
                 "values": values,
                 "sources": sources,
-                "redacted": ["llm_api_key"] if values.get("llm_api_key") == "***set***" else [],
+                "redacted": redacted,
             }, indent=2))
             return 0
 
@@ -313,18 +343,28 @@ def main(argv: list[str] | None = None) -> int:
 def _cmd_tenant_key(home: str | None) -> int:
     """Generate one tenant API key and print the config the operator pastes in.
 
-    The plaintext key is printed exactly once. Only its digest should be
-    persisted (in `tenants` or `<home>/tenants.json`); the key itself is a
-    bearer credential and must not be logged.
+    The plaintext key is printed exactly once, here. Three things this command
+    got wrong, all fixed together because they are one workflow (audit R2):
+
+    - It told the operator to "store only the digest". But
+      `TenantRegistry.resolve` hashes the *presented* value, so an entry holding
+      a digest authenticates nothing. Following the printed advice locked the
+      operator out of their own deployment.
+    - The `config_entry` it printed was `tenants = { "k": "v" }`, which is not
+      valid TOML; pasting it made `Config.load` fail outright.
+    - Printing the digest beside the key made the digest pointless as a stored
+      form, so it is gone: the entry below is the credential.
     """
-    from .tenancy import hash_key, new_key
+    from .tenancy import new_key
 
     key = new_key()
     print(json.dumps({
         "api_key": key,
-        "warning": "print this once, store only the digest",
-        "config_entry": f'tenants = {{ "{key}": "<tenant-name>" }}',
-        "digest": hash_key(key),
+        "warning": "printed once; put it in the config entry below and store "
+                   "nothing else. Anyone holding this key is that tenant.",
+        "config_entry": f'tenants = {{ "{key}" = "acme" }}',
+        "note": "replace acme with the tenant name; the key is presented "
+                "verbatim and hashed on lookup, so store the key itself",
     }, indent=2))
     return 0
 
