@@ -1101,7 +1101,26 @@ class MemoryStore:
         if do_vacuum:
             self.conn.execute("VACUUM")
             self.conn.commit()
-        return {"purged": purged}
+        # Rows are gone; their vectors are not. `forget` marked each id dead in
+        # the index, so `active_count()` reads correctly — which is exactly why
+        # this looked fine — but the raw float data for an erased memory stays
+        # in the sidecar, and the tombstones that tracked it stay forever, since
+        # compaction only reclaims ids above dead_compact_ratio and a purge can
+        # drive that ratio to zero by removing the rows those tombstones
+        # pointed at (audit R7).
+        #
+        # A full rebuild from live rows is the mechanism that actually drops
+        # them, so purge does it directly rather than waiting for a ratio that
+        # may never be reached. Brute needs nothing: its .npz is rewritten from
+        # live rows on every flush.
+        rebuilt: dict | None = None
+        if purged and self.index.kind == "hnsw":
+            rebuilt = self.rebuild_index(reason="purge")
+        result: dict = {"purged": purged}
+        if rebuilt is not None:
+            result["index"] = {"rebuilt": rebuilt["rebuilt"],
+                               "kind": rebuilt["index_kind"]}
+        return result
 
     def _schedule_compaction_if_needed(self) -> None:
         if self.index.kind == "hnsw" and self.index.dead_ratio >= self.cfg.dead_compact_ratio:
