@@ -45,15 +45,19 @@ hnswlib index or the SQ8 shortlist+f32 rerank path to keep recall@10 >= 0.95.
 
 Full output at [`bench/soak-results.txt`](../bench/soak-results.txt).
 
-- duration 60 s, ops 21 280, cycles 2 660
-- recall mean 5.50 ms, p95 11.84 ms
-- p95 first third 3.40 ms, last third 12.95 ms
-- RSS 37.1 -> 68.8 MB (well under 300 MB gate)
-- WAL peak 1.84 MB (well under 80 MB gate)
+- duration 60 s, ops 36 096, cycles 4 512
+- recall mean 7.93 ms, p95 16.03 ms
+- p95 first third 4.22 ms, last third 17.31 ms
+- RSS 37.3 -> 89.9 MB (under the 300 MB gate)
+- WAL peak 2.02 MB (well under 80 MB gate)
 
-The soak passes all three stability gates (p95 ratio < 4x, WAL < 80 MB,
-RSS growth < 300 MB). Last-third p95 creep is from the BruteForceIndex's
-growing candidate set; under hnswlib it stays flat.
+**The p95 gate does not pass.** 17.31 / 4.22 = 4.10, against the 4.0 limit in
+`bench/soak.py:52` (`_P95_RATIO_LIMIT`). The WAL and RSS gates pass. This section
+previously claimed all three passed while quoting numbers (21 280 ops, 3.40 ->
+12.95 ms) that appear in no artifact; the figures above are what the cited file
+actually records. Last-third p95 creep is from the BruteForceIndex's growing
+candidate set; under hnswlib it stays flat. The soak artifact is gitignored, so
+re-run `bench/soak.py` to reproduce.
 
 ## Reproduction
 
