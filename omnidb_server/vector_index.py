@@ -6,6 +6,7 @@ import sys
 import tempfile
 import threading
 import time
+import zipfile
 from pathlib import Path
 
 import numpy as np
@@ -37,16 +38,31 @@ class BruteForceIndex:
     def load(cls, path: Path, dim: int) -> "BruteForceIndex":
         index = cls(path, dim)
         if path.exists():
-            with path.open("rb") as handle:
-                data = np.load(handle)
-                matrix = data["matrix"].astype(np.float32)
-                if matrix.shape[1] != dim:
-                    raise VectorIndexError(
-                        f"index dim {matrix.shape[1]} != configured dim {dim}"
-                    )
-                index._ids_buf = data["ids"].astype(np.int64)
-                index._matrix_buf = np.ascontiguousarray(matrix)
-                index._n = len(index._ids_buf)
+            try:
+                with path.open("rb") as handle:
+                    data = np.load(handle)
+                    matrix = data["matrix"].astype(np.float32)
+                    if matrix.shape[1] != dim:
+                        raise VectorIndexError(
+                            f"index dim {matrix.shape[1]} != configured dim {dim}"
+                        )
+                    index._ids_buf = data["ids"].astype(np.int64)
+                    index._matrix_buf = np.ascontiguousarray(matrix)
+                    index._n = len(index._ids_buf)
+            except VectorIndexError:
+                # A dim mismatch is a configuration fault with a specific remedy
+                # (re-embed at the configured dim), so it keeps its own message.
+                raise
+            except (KeyError, ValueError, OSError, EOFError,
+                    zipfile.BadZipFile) as exc:
+                # Mirrors HnswlibIndex's conversion above. Without it, a corrupt
+                # or foreign .npz escapes as a raw KeyError/ValueError on both
+                # open paths: `open_read_only_store` catches only
+                # VectorIndexError, so the operator got a numpy traceback
+                # instead of the fallback the hnsw path already performs
+                # (audit C6).
+                raise VectorIndexError(
+                    f"brute sidecar unusable at {path.name} ({exc})") from exc
         return index
 
     @property

@@ -203,6 +203,15 @@ class MemoryStore:
         # AUDIT-I02: a read-only diagnostic store performs zero persistence:
         # no recovery, no meta writes, no flush on close.
         self._read_only = read_only
+        # Why this store's index is not the persisted one, when it is not.
+        # The read-only opener falls back to a freshly built empty index after a
+        # corrupt sidecar, which used to report itself as a healthy count-0
+        # index against a non-zero live count — dense recall then silently
+        # returned nothing (audit C6, the ARCH-04 false-clean class). Carrying
+        # the reason here lets `stats` state the divergence in the payload
+        # instead of only on stderr, so a caller that cannot see stderr can
+        # still tell an empty home from a broken index.
+        self.index_degraded_reason: str | None = None
         # AUDIT-I05: the budget is VM instructions, not progress callbacks;
         # the handler divides it by its callback interval below.
         self.max_query_steps = 5_000_000
@@ -1225,6 +1234,15 @@ class MemoryStore:
                 for p in sorted(self._home().iterdir())
                 if p.is_file() and p.name.startswith("omnidb.db")
             }
+        index_count = self.index.active_count()
+        # An index holding fewer vectors than there are live rows is the
+        # divergence that matters: dense recall will miss rows silently. Stated
+        # in the payload, not just on stderr, because an MCP caller reading
+        # `stats` cannot see the opener's stderr (audit C6).
+        index_drift = self.index_degraded_reason or (
+            f"index holds {index_count} vectors for {sum(kinds.values())} live rows"
+            if index_count != sum(kinds.values()) else None
+        )
         payload = {
             "tenant": tenant,
             "live": sum(kinds.values()),
@@ -1235,9 +1253,10 @@ class MemoryStore:
             "embedder": {"name": self.embedder.name, "dim": self.embedder.dim},
             "index": {
                 "kind": self.index.kind,
-                "count": self.index.active_count(),
+                "count": index_count,
                 "dead_ratio": round(getattr(self.index, "dead_ratio", 0.0), 4),
             },
+            "index_drift": index_drift,
             "pending_compaction": get_meta(self.conn, "compaction_due") == "1",
             "reconciled_at": get_meta(self.conn, "reconciled_at"),
             "wal_bytes": files.get("omnidb.db-wal", 0),

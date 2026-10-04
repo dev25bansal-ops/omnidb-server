@@ -257,6 +257,17 @@ def open_read_only_store(cfg=None):
             file=sys.stderr,
         )
         index = BruteForceIndex(cfg.home / "vectors.npz", embedder.dim)
+        store = MemoryStore(conn, embedder, index, cfg, read_only=True)
+        # The fallback index is empty, so dense recall will silently return
+        # nothing while `live` reports the real row count. Stamping the reason
+        # lets `stats` carry that in its payload rather than leaving it on
+        # stderr alone, which a caller reading stats over MCP cannot see
+        # (audit C6).
+        store.index_degraded_reason = (
+            f"corrupt {index_kind} index ({exc}); rebuilt an empty brute-force "
+            "index, so dense recall returns nothing until the index is rebuilt"
+        )
+        return store
     return MemoryStore(conn, embedder, index, cfg, read_only=True)
 
 
