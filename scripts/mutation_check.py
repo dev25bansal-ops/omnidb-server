@@ -73,6 +73,16 @@ EQUIVALENT: dict[int, str] = {
         "test_quote_doubling_is_dead_defense_only_because_the_tokenizer_excludes_quotes",
 }
 
+# The tokenizing assignment in fusion.fts_match_query, as one exact string, so
+# the two anchors that mutate its `[:max_terms]` cap stay byte-accurate against
+# a two-line comprehension. A stale anchor is indistinguishable from an unkilled
+# mutant to the score, and the gate fails on NOT_APPLICABLE for exactly that
+# reason — which is how the F35/F36 refactors surfaced here.
+_TOKEN_LINE = (
+    "tokens = [t for t in _TOKEN.findall(_fold(text))\n"
+    "              if t not in _STOP_WORDS]"
+)
+
 # Each mutation: (module, description, list of (old, new) exact-text replacements).
 MUTATIONS: list[tuple[str, str, list[tuple[str, str]]]] = [
     # ---------------- scoring.py: recency decay ----------------
@@ -144,16 +154,14 @@ MUTATIONS: list[tuple[str, str, list[tuple[str, str]]]] = [
     ("fusion", 'OR join -> AND join: recall collapses to conjunctive match',
      [('" OR ".join(', '" AND ".join(')]),
     ("fusion", "max_terms slice removed: unbounded term count",
-     [("tokens = _TOKEN.findall(text.lower())[:max_terms]",
-       "tokens = _TOKEN.findall(text.lower())")]),
+     [(_TOKEN_LINE + "[:max_terms]", _TOKEN_LINE)]),
     ("fusion", ".lower() removed: case sensitivity restored",
-     [("_TOKEN.findall(text.lower())", "_TOKEN.findall(text)")]),
+     [("_TOKEN.findall(_fold(text))", "_TOKEN.findall(text)")]),
     ("fusion", "max_terms default 24 -> 1: only first token searched",
      [("def fts_match_query(text: str, max_terms: int = 24)",
        "def fts_match_query(text: str, max_terms: int = 1)")]),
     ("fusion", "empty text yields [''] token instead of empty expression",
-     [("tokens = _TOKEN.findall(text.lower())[:max_terms]",
-       "tokens = _TOKEN.findall(text.lower())[:max_terms] or ['']")]),
+     [(_TOKEN_LINE + "[:max_terms]", _TOKEN_LINE + "[:max_terms] or ['']")]),
 ]
 
 
