@@ -29,3 +29,12 @@ pytest_out.txt
 soak_*.txt
 bench/soak-results*.txt
 bench/results.md
+
+# Scratch trees from benchmark and audit runs. They live outside this repo
+# (at the workspace root, D:\OMNIDB) so no tool can enforce the boundary —
+# see ../WORKSPACE.md for what each one is and what is safe to delete.
+_qcr/
+_w3*/
+_verify*/
+_f1_snap/
+.omni-audit/
