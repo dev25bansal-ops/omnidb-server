@@ -96,9 +96,13 @@ def main(argv: list[str] | None = None) -> int:
                              help="hard-delete soft-deleted memories")
     p_purge.add_argument("--vacuum", action="store_true",
                          help="reclaim disk space with VACUUM afterwards")
+    _add_tenant_flag(p_purge, "only purge this tenant's soft-deleted rows "
+                              "(default: the single-tenant deployment)")
     p_export = sub.add_parser("export", parents=[common],
                               help="dump live memories and edges to a JSONL file")
     p_export.add_argument("path")
+    _add_tenant_flag(p_export, "only export this tenant's rows "
+                               "(default: the single-tenant deployment)")
     p_export.add_argument("--since-ms", type=int, default=None,
                           help="only export memories with created_ms >= this value")
     p_export.add_argument("--agent-id", default=None,
@@ -108,6 +112,8 @@ def main(argv: list[str] | None = None) -> int:
     p_import = sub.add_parser("import", parents=[common],
                               help="restore a JSONL export into an empty home")
     p_import.add_argument("path")
+    _add_tenant_flag(p_import, "restore into this tenant "
+                               "(default: the single-tenant deployment)")
     sub.add_parser("doctor", parents=[common],
                    help="print an environment health report as JSON (exit 4 on failure)")
     sub.add_parser("init", parents=[common],
@@ -228,6 +234,7 @@ def main(argv: list[str] | None = None) -> int:
                         since_ms=args.since_ms,
                         agent_id=args.agent_id,
                         kind=args.kind,
+                        tenant=_tenant_flag(args),
                     ), indent=2))
                 elif args.command == "query-log":
                     rows = store.conn.execute(
@@ -282,11 +289,13 @@ def main(argv: list[str] | None = None) -> int:
                     backup_home(store, _Path(args.dest), keep=args.keep), indent=2,
                 ))
             elif args.command == "purge":
-                print(json.dumps(store.purge(do_vacuum=args.vacuum), indent=2))
+                print(json.dumps(store.purge(do_vacuum=args.vacuum,
+                                              tenant=_tenant_flag(args)), indent=2))
             elif args.command == "import":
                 from .portability import import_jsonl
 
-                print(json.dumps(import_jsonl(store, args.path), indent=2))
+                print(json.dumps(import_jsonl(store, args.path,
+                                               tenant=_tenant_flag(args)), indent=2))
     except Exception as exc:
         from .config import ConfigError
         from .db import DbError
@@ -404,19 +413,34 @@ _TOML_TEMPLATE = """\
 """
 
 
-def _tenant_of(args) -> str:
-    """The tenant a skill command runs against; None means this deployment's
-    single tenant, which is what a local operator without credentials gets.
+def _add_tenant_flag(parser, help_text: str) -> None:
+    """Give a subcommand the optional `--tenant` operator surface.
 
-    `--tenant` is validated here rather than passed through (audit C3): it is
-    argv, so it is exactly as untrusted as the store's own callers are, and the
-    store now validates too. This check exists so the operator gets the
+    Audit C13: `purge`, `export` and `import` all take a `tenant` in the store
+    layer, but the CLI exposed no way to pass one, so an operator's commands
+    acted on `default` and nothing else — there was no way to reclaim disk for,
+    or export and restore, a named tenant. `skill --tenant` existed but only
+    carries skill-tagged rows, which is not a backup.
+
+    The default is `default` rather than required, because every existing
+    single-tenant invocation must keep working unchanged.
+    """
+    parser.add_argument("--tenant", default=None, help=help_text)
+
+
+def _tenant_flag(args) -> str:
+    """Resolve a subcommand's `--tenant`, validating it.
+
+    argv is exactly as untrusted as the store's own callers (audit C3), and the
+    store validates too. Checking here as well means the operator gets the
     actionable message ("tenant id has characters outside ...") at the command
-    line instead of a stack trace from deeper in the write path.
+    line rather than a traceback from deeper in.
     """
     from .tenancy import DEFAULT_TENANT, validate_tenant_id
 
     return validate_tenant_id(args.tenant) if args.tenant else DEFAULT_TENANT
+
+
 
 
 def _cmd_skill(store, args) -> int:
@@ -424,12 +448,12 @@ def _cmd_skill(store, args) -> int:
 
     if args.skill_command == "export":
         print(json.dumps(export_skill(store, args.name, args.path,
-                                  tenant=_tenant_of(args)), indent=2))
+                                  tenant=_tenant_flag(args)), indent=2))
     elif args.skill_command == "import":
         print(json.dumps(import_skill(store, args.path, overwrite=args.overwrite,
-                                  tenant=_tenant_of(args)), indent=2))
+                                  tenant=_tenant_flag(args)), indent=2))
     elif args.skill_command == "list":
-        print(json.dumps(list_skills(store, tenant=_tenant_of(args)), indent=2))
+        print(json.dumps(list_skills(store, tenant=_tenant_flag(args)), indent=2))
     return 0
 
 
