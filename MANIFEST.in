@@ -1,9 +1,11 @@
 include README.md
 include CHANGELOG.md
 include LICENSE
+include NOTICE
 include ARCHITECTURE.md
 include pyproject.toml
 include .github/workflows/ci.yml
+include .github/workflows/release.yml
 
 recursive-include examples *.py *.json *.md
 recursive-include bench *.py *.md
@@ -16,3 +18,9 @@ include omnidb_server/py.typed
 global-exclude __pycache__
 global-exclude *.py[cod]
 global-exclude *.egg-info
+
+# bench/.cache*/ is a local HuggingFace model cache (~4 GB of weights on the
+# author's machine; git-ignored, but sdist is built from the working tree and
+# does not honour .gitignore). The `*.md` match above was pulling third-party
+# model-card text out of it into the sdist; prune the whole directory.
+prune bench/.cache*

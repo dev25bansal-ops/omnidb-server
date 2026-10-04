@@ -93,13 +93,13 @@ def test_doctor_lock_probe_reports_free_and_held(tmp_path, capsys):
     assert "free" in report["checks"]["lock"]["detail"]
 
     # a held lock (taken in-process; region locks conflict across handles and
-    # open file descriptions) still flags, and doctor keeps exiting 0
+    # open file descriptions) still flags, and doctor returns the health status
     from omnidb_server.server import _acquire_home_lock, _release_home_lock
 
     fd = _acquire_home_lock(tmp_path)
     try:
         assert not isinstance(fd, OSError)
-        assert cli.main(["doctor", "--home", str(tmp_path)]) == 0
+        assert cli.main(["doctor", "--home", str(tmp_path)]) == 4
         report = json.loads(capsys.readouterr().out)
         assert report["ok"] is False
         assert "held by a running server" in report["checks"]["lock"]["detail"]

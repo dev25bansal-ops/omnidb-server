@@ -107,23 +107,7 @@ def embed_all(texts: list[str]):
 
 # ---------------------------------------------------------------- metrics --
 
-def dcg_at_k(gains: list[float], k: int) -> float:
-    return sum(g / math.log2(i + 2) for i, g in enumerate(gains[:k]))
-
-
-def ndcg_at_k(ranked_doc_ids: list[str], relevant: dict[str, int], k: int) -> float:
-    gains = [float(relevant.get(d, 0)) for d in ranked_doc_ids[:k]]
-    ideal = sorted(relevant.values(), reverse=True)
-    idcg = dcg_at_k([float(g) for g in ideal], k)
-    return dcg_at_k(gains, k) / idcg if idcg > 0 else 0.0
-
-
-def recall_at_k(ranked: list[str], relevant: set[str], k: int) -> float:
-    if not relevant:
-        return 0.0
-    return len(set(ranked[:k]) & relevant) / len(relevant)
-
-
+from _stats import ndcg_at_k, recall_at_k
 def ci95(values: list[float]) -> tuple[float, float]:
     mean = statistics.mean(values)
     if len(values) < 2:
@@ -194,7 +178,7 @@ def bench_omnidb(docs, qvecs, queries, vecs, home: Path, dense_w: float,
         # map internal id -> doc id via insertion order (ids == 1..N here)
         ranked_docs = [docs[int(i[1:]) - 1][0] for i in ranked]
         ndcgs.append(ndcg_at_k(ranked_docs, rel, K))
-        recalls.append(recall_at_k(ranked_docs, set(rel), K))
+        recalls.append(recall_at_k(ranked_docs, {d for d, s in rel.items() if s > 0}, K))
     store.close()
     return {"ndcg": statistics.mean(ndcgs), "recall": statistics.mean(recalls),
             "insert_s": t_insert, "setup_s": t_setup,
@@ -233,7 +217,7 @@ def bench_sqlite_vec(docs, qvecs, queries, vecs, home: Path) -> dict:
         lat.append((time.perf_counter() - t) * 1000)
         ranked_docs = [docs[int(r[0])][0] for r in rows]
         ndcgs.append(ndcg_at_k(ranked_docs, rel, K))
-        recalls.append(recall_at_k(ranked_docs, set(rel), K))
+        recalls.append(recall_at_k(ranked_docs, {d for d, s in rel.items() if s > 0}, K))
     conn.close()
     return {"ndcg": statistics.mean(ndcgs), "recall": statistics.mean(recalls),
             "insert_s": t_insert, "setup_s": t_setup,
@@ -261,7 +245,7 @@ def bench_lancedb(docs, qvecs, queries, vecs, home: Path) -> dict:
         lat.append((time.perf_counter() - t) * 1000)
         ranked_docs = [r["doc_id"] for r in res]
         ndcgs.append(ndcg_at_k(ranked_docs, rel, K))
-        recalls.append(recall_at_k(ranked_docs, set(rel), K))
+        recalls.append(recall_at_k(ranked_docs, {d for d, s in rel.items() if s > 0}, K))
     return {"ndcg": statistics.mean(ndcgs), "recall": statistics.mean(recalls),
             "insert_s": t_insert, "setup_s": t_setup,
             "p50_ms": sorted(lat)[len(lat) // 2], "p95_ms": sorted(lat)[int(len(lat) * 0.95)]}
@@ -290,7 +274,7 @@ def bench_qdrant(docs, qvecs, queries, vecs, home: Path) -> dict:
         lat.append((time.perf_counter() - t) * 1000)
         ranked_docs = [p.payload["doc_id"] for p in res.points]
         ndcgs.append(ndcg_at_k(ranked_docs, rel, K))
-        recalls.append(recall_at_k(ranked_docs, set(rel), K))
+        recalls.append(recall_at_k(ranked_docs, {d for d, s in rel.items() if s > 0}, K))
     client.close()
     return {"ndcg": statistics.mean(ndcgs), "recall": statistics.mean(recalls),
             "insert_s": t_insert, "setup_s": t_setup,

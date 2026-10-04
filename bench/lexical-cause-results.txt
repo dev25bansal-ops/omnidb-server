@@ -1,0 +1,32 @@
+workload_revision: lexical-cause-v1
+workload_sha256: 74b77f188effa532706dbfe2ea65810d255469125e7b29f27ef258fa028b0216
+source_identity_sha256: a67cdd54a0ee824c5fd7dd6bcddcd0d983e005f37c2308e94fcd267f160f13a3
+python: 3.14.4
+platform: win32
+gate: none (cause isolation, not a stability claim)
+leg: FTS5 lexical leg, variants differ in ranking clause and join only
+sizes: 5000,25000
+queries_per_size: 12
+repeats: 2
+k_fetch: 50
+
+## p50 by corpus size (ms)
+
+| variant | 5000 | 25000 | alpha |
+|---|---|---|---|
+| V0_prod_order_bm25 | 4.740 | 30.135 | 1.149 |
+| V1_no_order | 0.047 | 0.095 | 0.440 |
+| V2_fts_only_rank | 5.708 | 27.758 | 0.983 |
+| V3_join_only | 0.051 | 0.079 | 0.274 |
+| V5_single_term | 0.021 | 0.026 | 0.148 |
+| V4_match_count | 0.796 | 6.209 | 1.276 |
+| match width (OR-ed) | 5000 | 25000 | n/a |
+| match width (single term) | 1 | 1 | n/a |
+
+## Deltas at the largest size (ms) -- what each clause costs
+
+V0 - V1  ranking the match set (ORDER BY bm25 removed)       +30.040
+V0 - V3  ranking on top of the join's row set                +30.056
+V1 - V4  fetching and joining rows, MATCH held constant       -6.114
+V0 - V5  cost attributable to match-set width                +30.109
+V0 - V2  what the join adds over rank-bounded FTS alone       +2.378

@@ -94,17 +94,48 @@ OUT_JSON = HERE / "research-v3-results.json"
 
 # ------------------------------------------------------------------ data ---
 
+def _beir_fetch(url: str, cache_name: str) -> bytes:
+    """Fetch a BEIR file, caching the raw bytes on disk.
+
+    load_beir runs inside every latency subprocess, so without a cache the
+    fiqa corpus is re-downloaded REPEATS*2 times; one torn connection
+    (http.client.IncompleteRead) then silently costs a measured run. Cached
+    bytes are the same bytes, so the parsed frames do not change.
+    """
+    cpath = CACHE / "beir" / cache_name
+    if cpath.exists():
+        return cpath.read_bytes()
+    last: Exception | None = None
+    data: bytes | None = None
+    for attempt in range(4):
+        try:
+            data = urllib.request.urlopen(url, timeout=300).read()
+            break
+        except Exception as exc:  # noqa: BLE001
+            last = exc
+            time.sleep(2 ** attempt)
+    if data is None:
+        raise RuntimeError(f"BEIR fetch failed for {url}: {last!r}")
+    cpath.parent.mkdir(parents=True, exist_ok=True)
+    tmp = cpath.with_suffix(cpath.suffix + ".part")
+    tmp.write_bytes(data)
+    tmp.replace(cpath)
+    return data
+
+
 def load_beir(hf_name: str):
     import pandas as pd
 
     base = f"https://huggingface.co/datasets/BeIR/{hf_name}/resolve/main"
     qrels_base = f"https://huggingface.co/datasets/BeIR/{hf_name}-qrels/resolve/main"
-    corpus_df = pd.read_parquet(io.BytesIO(urllib.request.urlopen(
-        f"{base}/corpus/corpus-00000-of-00001.parquet").read()))
-    queries_df = pd.read_parquet(io.BytesIO(urllib.request.urlopen(
-        f"{base}/queries/queries-00000-of-00001.parquet").read()))
-    qrels_df = pd.read_csv(io.BytesIO(urllib.request.urlopen(
-        f"{qrels_base}/test.tsv").read()), sep="\t")
+    corpus_df = pd.read_parquet(io.BytesIO(_beir_fetch(
+        f"{base}/corpus/corpus-00000-of-00001.parquet",
+        f"{hf_name}-corpus.parquet")))
+    queries_df = pd.read_parquet(io.BytesIO(_beir_fetch(
+        f"{base}/queries/queries-00000-of-00001.parquet",
+        f"{hf_name}-queries.parquet")))
+    qrels_df = pd.read_csv(io.BytesIO(_beir_fetch(
+        f"{qrels_base}/test.tsv", f"{hf_name}-qrels-test.tsv")), sep="\t")
     doc_ids = set(corpus_df["_id"].astype(str))
     docs = [(str(r["_id"]),
              f"{r.get('title', '')}. {r.get('text', '')}".strip())
@@ -172,53 +203,20 @@ def get_embeddings(ds: str, emb_name: str, docs, queries) -> tuple[np.ndarray, n
 
 # ---------------------------------------------------------------- metrics --
 
-def dcg_at_k(gains, k):
-    return sum(g / math.log2(i + 2) for i, g in enumerate(gains[:k]))
+from _stats import bootstrap_ci, holm, ndcg_at_k, paired_wilcoxon
+def relevant_docs(relevant) -> set[str]:
+    """The judged-RELEVANT doc ids for one query.
 
+    `load_beir` yields relevance as a {doc_id: score} dict taken straight from
+    the BEIR qrels, which grade some documents 0. A score-0 judgment means the
+    document was assessed and judged NOT relevant, so it must not count toward
+    recall in either direction: counting it inflates the denominator and deflates
+    the score. `set(relevant)` would include them, which is what this replaces.
 
-def ndcg_at_k(ranked, relevant, k):
-    gains = [float(relevant.get(d, 0)) for d in ranked[:k]]
-    ideal = sorted(relevant.values(), reverse=True)
-    idcg = dcg_at_k([float(g) for g in ideal], k)
-    return dcg_at_k(gains, k) / idcg if idcg > 0 else 0.0
-
-
-def recall_at_k(ranked, relevant, k):
-    if not relevant:
-        return 0.0
-    return len(set(ranked[:k]) & relevant) / len(relevant)
-
-
-def bootstrap_ci(per_query, n=BOOTSTRAP_N, seed=RNG_SEED):
-    arr = np.asarray(per_query, dtype=np.float64)
-    rng = np.random.default_rng(seed)
-    means = rng.choice(arr, size=(n, len(arr)), replace=True).mean(axis=1)
-    return float(arr.mean()), float(np.percentile(means, 2.5)), \
-        float(np.percentile(means, 97.5))
-
-
-def paired_wilcoxon(a, b):
-    from scipy.stats import wilcoxon
-
-    delta = np.asarray(a) - np.asarray(b)
-    nonzero = delta[delta != 0]
-    if len(nonzero) == 0:
-        return 1.0, 0.0
-    stat = wilcoxon(nonzero, alternative="two-sided", method="approx")
-    ranks = np.argsort(np.argsort(np.abs(nonzero))) + 1
-    rp = ranks[nonzero > 0].sum()
-    rm = ranks[nonzero < 0].sum()
-    return float(stat.pvalue), float((rp - rm) / ranks.sum())
-
-
-def holm(pvalues: dict) -> dict:
-    ordered = sorted(pvalues.items(), key=lambda kv: kv[1])
-    m = len(ordered)
-    adjusted, running = {}, 0.0
-    for i, (name, p) in enumerate(ordered):
-        running = max(running, min(1.0, p * (m - i)))
-        adjusted[name] = running
-    return adjusted
+    nDCG needs the graded scores, so it keeps reading the dict directly; only
+    set-based metrics go through here.
+    """
+    return {doc for doc, score in relevant.items() if score > 0}
 
 
 # --------------------------------------------------------------- engines ---
@@ -440,8 +438,17 @@ def between_process_latency(ds: str, emb: str, repo: str) -> dict:
                 continue
             runs.append(json.loads(r.stdout.strip().splitlines()[-1]))
         ok = [r for r in runs if "error" not in r]
+        failed = [r for r in runs if "error" in r]
+        # A crashed run is not a slow run. The n behind the spread is part of the
+        # RESULT, not an implementation detail: without it a spread over 3
+        # surviving runs prints identically to one over 5, and a reader cannot
+        # tell that runs were lost. The errored runs stay in "runs" above.
         out[mode] = {"runs": runs, "spread": {
             "p50s": sorted(r["p50_ms"] for r in ok),
+            "n_ok": len(ok), "n_requested": len(runs),
+            "n_failed": len(failed),
+            "errors": [str(x["error"]).strip().splitlines()[-1][:160]
+                       for x in failed],
         } if ok else None}
     return out
 
@@ -566,6 +573,64 @@ def per_query_wrap(per_q):
     return {"per_query": per_q}
 
 
+def _error_text(entry: dict) -> str:
+    """One line describing a failed run, never raising.
+
+    The collector stored `{"error": child.stderr[-400:]}`, so the value can be
+    absent, None, or an empty string when a child died without writing to
+    stderr. `"".splitlines()[-1]` raises IndexError, which would take the whole
+    report down over one malformed cell.
+    """
+    raw = entry.get("error")
+    if raw is None:
+        return "(no error text stored)"
+    text = str(raw).strip()
+    return text.splitlines()[-1][:160] if text else "(empty stderr)"
+
+
+def _run_provenance(data: dict) -> dict:
+    """Recover run counts for one latency cell, from whichever source has them.
+
+    F33: cells written before the n_ok/n_requested/n_failed keys existed carry
+    only `spread.p50s`, so reading n_failed with a default of 0 made `render()`
+    claim "5 fresh processes" over a body that printed 3/5 and suppress the
+    FAILED line entirely - the F14 fix was inert on stored data.
+
+    Two rules an earlier version of this got wrong, both pinned by tests:
+      * n_requested falls back to REPEATS, NEVER to the observed run count. The
+        pre-F14 collector deleted failed runs before writing, so a short `runs`
+        list is evidence of loss, not a smaller experiment; defaulting to
+        `n_ok + n_failed` re-concealed exactly what this function exists to show.
+      * stored values are read with `is not None`, not truthiness, so an explicit
+        `p50s: []` or `errors: []` is honoured instead of being overwritten.
+    """
+    spread = data.get("spread") or {}
+    runs = [r for r in (data.get("runs") or []) if isinstance(r, dict)]
+    errored = [r for r in runs if "error" in r]
+    ok = [r for r in runs if "error" not in r and "p50_ms" in r]
+
+    stored_p50s = spread.get("p50s")
+    p50s = list(stored_p50s) if stored_p50s is not None else [r["p50_ms"] for r in ok]
+
+    n_ok = spread.get("n_ok", len(ok))
+    n_failed = spread.get("n_failed", len(errored))
+
+    stored_errors = spread.get("errors")
+    if stored_errors is not None:
+        errors = [str(e) for e in stored_errors]
+    else:
+        errors = [_error_text(r) for r in errored]
+    # Never promise a list that cannot be delivered: if the counts say runs were
+    # lost but no text survived, say so rather than printing "above:" followed by
+    # nothing, which is the concealment this function was written to remove.
+    if n_failed and not errors:
+        errors = ["(error text not stored)"] * n_failed
+
+    n_req = spread.get("n_requested") or max(REPEATS, n_ok + n_failed)
+    return {"p50s": p50s, "n_ok": n_ok, "n_failed": n_failed,
+            "n_requested": n_req, "errors": errors}
+
+
 def render(results: dict) -> None:
     lines = [
         "# Research benchmark v3: full-size corpora, BM25 baseline, cross-encoder",
@@ -631,14 +696,25 @@ def render(results: dict) -> None:
             lines.append("")
         lat = results[ds].get(f"_latency-{ds}", {})
         if lat:
+            prov = {m: _run_provenance(d) for m, d in lat.items()}
+            lost = sum(p["n_failed"] for p in prov.values())
+            asked = max((p["n_requested"] for p in prov.values()), default=REPEATS)
+            note = (f"{asked} fresh processes" if not lost else
+                    f"{asked} requested; failed runs are listed below")
             lines += [f"### between-process latency spread ({ds}, minilm, "
-                      f"{REPEATS} fresh processes)", ""]
+                      f"{note})", ""]
             for mode, data in lat.items():
-                spread = data.get("spread")
-                if spread:
-                    p50s = spread["p50s"]
-                    lines.append(f"- {mode}: p50 across processes = "
-                                 f"{p50s} ms")
+                p = prov[mode]
+                if not p["p50s"]:
+                    lines.append(f"- {mode}: NO successful runs")
+                    continue
+                lines.append(f"- {mode}: p50 across {p['n_ok']}/{p['n_requested']} "
+                             f"processes = {p['p50s']} ms")
+                if p["n_failed"]:
+                    lines.append(
+                        f"  - {p['n_failed']} of {p['n_requested']} runs FAILED and are "
+                        f"excluded from the numbers above: "
+                        f"{'; '.join(p['errors'])}")
             lines.append("")
     ps_idx = ", ".join(
         f"{d} {results[d]['pyserini'].get('index_s', '?'):.1f}"

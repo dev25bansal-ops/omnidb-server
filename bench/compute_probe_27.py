@@ -1,7 +1,9 @@
 """Complete 27-row window-probe recompute: raw Wilcoxon p, joint-Holm (m=27),
 paired-diff 95% bootstrap CI, and per-query improve/harm. All from per-query
 arrays. Verifies each raw p and delta against the published md values."""
-import json, os
+import json
+import os
+
 import numpy as np
 from scipy.stats import wilcoxon
 
@@ -33,13 +35,7 @@ def diff_ci(base, rr):
     means = rng.choice(d, size=(N, len(d)), replace=True).mean(axis=1)
     return float(np.percentile(means, 2.5)), float(np.percentile(means, 97.5))
 
-def holm(pv):
-    ordered = sorted(pv.items(), key=lambda kv: kv[1]); m = len(ordered)
-    adj, run = {}, 0.0
-    for i, (k, p) in enumerate(ordered):
-        run = max(run, min(1.0, p * (m - i))); adj[k] = run
-    return adj
-
+from _stats import holm
 # All 27 rows: (corpus, stage_label, stage_key, w, pub_delta, pub_p)
 R = [
     ("fiqa","bm25","bm25",25,+0.0637,"<0.0001"),("fiqa","bm25","bm25",50,+0.0728,"<0.0001"),
@@ -64,9 +60,13 @@ raw = {}
 for (corpus, lab, skey, w, pub_d, pub_p) in R:
     d = json.load(open(files[corpus], encoding="utf-8"))
     base, rr = cell(d, skey, w)
-    p = wilcoxon_p(rr, base); delta = float(np.mean(rr) - np.mean(base))
-    lo, hi = diff_ci(base, rr); darr = np.asarray(rr) - np.asarray(base)
-    imp = int((darr > 0).sum()); harm = int((darr < 0).sum()); n = len(darr)
+    p = wilcoxon_p(rr, base)
+    delta = float(np.mean(rr) - np.mean(base))
+    lo, hi = diff_ci(base, rr)
+    darr = np.asarray(rr) - np.asarray(base)
+    imp = int((darr > 0).sum())
+    harm = int((darr < 0).sum())
+    n = len(darr)
     name = f"{corpus}/{lab}/w{w}"
     raw[name] = p
     rows.append(dict(corpus=corpus, lab=lab, w=w, n=n, base=float(np.mean(base)),
@@ -80,8 +80,10 @@ print(f"m={len(rows)} joint Holm family")
 print(f"{'row':<26}{'n':>5}{'base':>8}{'rr':>8}{'delta':>9}{'p_raw':>9}{'pHolm':>9}{'dCI':>22}  imp/harm  pub_p")
 for r in rows:
     dci = f"({r['lo']:+.3f},{r['hi']:+.3f})"
-    impct = 100*r["imp"]/r["n"]; harmpct = 100*r["harm"]/r["n"]
-    print(f"{r['corpus']+'/'+r['lab']+f'/w{r['w']}':<26}{r['n']:>5}{r['base']:>8.4f}{r['rr']:>8.4f}{r['delta']:>+9.4f}{r['p_raw']:>9.4f}{r['p_holm']:>9.4f}{dci:>22}  {impct:.0f}/{harmpct:.0f}  {r['pub_p']}")
+    impct = 100*r["imp"]/r["n"]
+    harmpct = 100*r["harm"]/r["n"]
+    key = f"{r['corpus']}/{r['lab']}/w{r['w']}"
+    print(f"{key:<26}{r['n']:>5}{r['base']:>8.4f}{r['rr']:>8.4f}{r['delta']:>+9.4f}{r['p_raw']:>9.4f}{r['p_holm']:>9.4f}{dci:>22}  {impct:.0f}/{harmpct:.0f}  {r['pub_p']}")
 
 # save for the ECDF figure (verified window-probe per-query deltas)
 out = {}

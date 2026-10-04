@@ -8,6 +8,7 @@ import httpx
 import numpy as np
 
 from .llm import resolve_llm_config
+from .tenancy import DEFAULT_TENANT
 
 _CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 _MAX_FACT_CHARS = 500
@@ -50,12 +51,14 @@ def _sanitize(text: str) -> str:
     return re.sub(r"\s+", " ", cleaned).strip()[:_MAX_EPISODE_CHARS]
 
 
-def _episodes(store, since_ms: int, limit: int = 500) -> list:
+def _episodes(store, since_ms: int, limit: int = 500,
+              tenant: str = DEFAULT_TENANT) -> list:
     rows = store.conn.execute(
         "SELECT id, content, metadata, agent_id FROM memories "
         "WHERE kind = 'episodic' AND deleted_ms IS NULL AND superseded_by IS NULL "
-        "AND created_ms >= ? ORDER BY created_ms LIMIT ?",
-        (since_ms, limit),
+        "AND created_ms >= ? AND tenant_id = ? "
+        "ORDER BY created_ms LIMIT ?",
+        (since_ms, tenant, limit),
     ).fetchall()
     fresh = []
     for row in rows:
@@ -70,18 +73,20 @@ def _episodes(store, since_ms: int, limit: int = 500) -> list:
     return fresh
 
 
-def _mark_consolidated(store, episode_ids: list[int]) -> None:
+def _mark_consolidated(store, episode_ids: list[int],
+                       tenant: str = DEFAULT_TENANT) -> None:
     for eid in episode_ids:
         row = store.conn.execute(
-            "SELECT metadata FROM memories WHERE id = ?", (eid,)
+            "SELECT metadata FROM memories WHERE id = ? AND tenant_id = ?",
+            (eid, tenant),
         ).fetchone()
         if row is None:
             continue
         metadata = json.loads(row["metadata"])
         metadata["consolidated"] = True
         store.conn.execute(
-            "UPDATE memories SET metadata = ? WHERE id = ?",
-            (json.dumps(metadata), eid),
+            "UPDATE memories SET metadata = ? WHERE id = ? AND tenant_id = ?",
+            (json.dumps(metadata), eid, tenant),
         )
     store.conn.commit()
 
@@ -143,7 +148,8 @@ class _LiveSemanticCandidates:
     pool size is the candidate window, not a hard cap on dedup coverage.
     """
 
-    def __init__(self, store, pool_size: int = 500, agent_id: str | None = None) -> None:
+    def __init__(self, store, pool_size: int = 500, agent_id: str | None = None,
+                 tenant: str = DEFAULT_TENANT) -> None:
         self._pool_size = pool_size
         # AUDIT-I11: deduplication is partitioned by agent scope — a fact
         # distilled from one agent's episodes only dedups against that
@@ -156,17 +162,17 @@ class _LiveSemanticCandidates:
             rows = store.conn.execute(
                 "SELECT id, content FROM memories WHERE kind = 'semantic' "
                 "AND deleted_ms IS NULL AND superseded_by IS NULL "
-                "AND agent_id IS NULL "
+                "AND agent_id IS NULL AND tenant_id = ? "
                 "ORDER BY created_ms DESC LIMIT ?",
-                (pool_size,),
+                (tenant, pool_size),
             ).fetchall()
         else:
             rows = store.conn.execute(
                 "SELECT id, content FROM memories WHERE kind = 'semantic' "
                 "AND deleted_ms IS NULL AND superseded_by IS NULL "
-                "AND agent_id = ? "
+                "AND agent_id = ? AND tenant_id = ? "
                 "ORDER BY created_ms DESC LIMIT ?",
-                (agent_id, pool_size),
+                (agent_id, tenant, pool_size),
             ).fetchall()
         self._ids = [int(r["id"]) for r in rows]
         self._matrix = (
@@ -182,7 +188,8 @@ class _LiveSemanticCandidates:
         return self._ids[top] if float(sims[top]) >= _DEDUP_COSINE else None
 
 
-def run_consolidation(store, hours: float = 24.0, dry_run: bool = False) -> dict:
+def run_consolidation(store, hours: float = 24.0, dry_run: bool = False,
+                      tenant: str = DEFAULT_TENANT) -> dict:
     """Distill recent episodic memories into semantic ones.
 
     Without an LLM configured this runs the offline stub (verbatim copies).
@@ -192,10 +199,18 @@ def run_consolidation(store, hours: float = 24.0, dry_run: bool = False) -> dict
     `dry_run=True` runs the full pipeline — sanitize, budget, extraction,
     validation, dedup matching — and reports what it *would* write without
     touching the store.
+
+    Every row this touches is fenced to `tenant`: the episodes it reads, the
+    semantic rows it dedups against, the facts it writes, and the episodes it
+    marks as consumed. Without that fence a consolidation run would distil one
+    tenant's episodes into another's store, dedup one tenant's facts against
+    another's, and mark another tenant's rows consumed. It also means the
+    transcript sent to a configured LLM contains one tenant's data only.
     """
     t0 = time.perf_counter()
     cutoff_ms = int((store.now_fn() - hours * 3600) * 1000)
-    episodes, episodes_skipped = _fit_episode_budget(_episodes(store, cutoff_ms)[:500])
+    episodes, episodes_skipped = _fit_episode_budget(
+        _episodes(store, cutoff_ms, tenant=tenant)[:500])
     # Always-on shape (J-12): every report carries the same keys, even
     # when the early-return path or LLM-failure path skips later fields.
     report = {"episodes_scanned": len(episodes), "episodes_skipped": episodes_skipped,
@@ -213,18 +228,29 @@ def run_consolidation(store, hours: float = 24.0, dry_run: bool = False) -> dict
     resolved_base, resolved_model = resolve_llm_config(store.cfg)
     llm_configured = resolved_base is not None and resolved_model is not None
     consumed_source_ids: list[int] = []
-    # AUDIT-I11: (fact payload, producing chunk's source ids, agent scope)
-    raw_facts: list[tuple[dict, list[int], str | None]] = []
+    # AUDIT-I11: (fact payload, producing chunk's source ids, agent scope, source scopes)
+    raw_facts: list[tuple[dict, list[int], str | None, frozenset[str | None]]] = []
     if llm_configured:
         base_url = resolved_base or ""
         model = resolved_model or ""
         chunk_size = max(int(store.cfg.consolidation_chunk_episodes), 1)
-        chunks = [episodes[i:i + chunk_size]
-                  for i in range(0, len(episodes), chunk_size)]
+        episodes_by_agent: dict[str | None, list[dict]] = {}
+        for episode in episodes:
+            episodes_by_agent.setdefault(episode.get("agent_id"), []).append(episode)
+        # A chunk must never combine tenant scopes.
+        chunks = [
+            agent_episodes[i:i + chunk_size]
+            for agent_episodes in episodes_by_agent.values()
+            for i in range(0, len(agent_episodes), chunk_size)
+        ]
         chunks_failed = 0
         chunk_errors: list[str] = []
         for chunk in chunks:
             try:
+                chunk_agents = frozenset(e.get("agent_id") for e in chunk)
+                if len(chunk_agents) != 1:
+                    raise ValueError("consolidation chunk contains mixed agent scopes")
+                chunk_agent = next(iter(chunk_agents))
                 chunk_facts = _llm_extract_facts(base_url, model,
                                                  store.cfg.llm_api_key, chunk)
             except Exception as exc:
@@ -238,9 +264,7 @@ def run_consolidation(store, hours: float = 24.0, dry_run: bool = False) -> dict
             # AUDIT-I11: bind each fact to the chunk that actually produced
             # it (provenance) and to that chunk's agent scope.
             chunk_source_ids = [e["id"] for e in chunk]
-            chunk_agents = {e.get("agent_id") for e in chunk}
-            chunk_agent = chunk_agents.pop() if len(chunk_agents) == 1 else None
-            raw_facts.extend((obj, chunk_source_ids, chunk_agent)
+            raw_facts.extend((obj, chunk_source_ids, chunk_agent, chunk_agents)
                              for obj in (chunk_facts or []))
             consumed_source_ids.extend(chunk_source_ids)
         report["chunks_total"] = len(chunks)
@@ -255,8 +279,11 @@ def run_consolidation(store, hours: float = 24.0, dry_run: bool = False) -> dict
     else:
         # offline stub: verbatim copies, 1:1 with the episode list; AUDIT-I11
         # each fact's provenance is exactly its own episode and its scope.
-        raw_facts = [({"fact": e["content"], "confidence": 0.5},
-                      [e["id"]], e.get("agent_id")) for e in episodes]
+        raw_facts = [
+            ({"fact": e["content"], "confidence": 0.5}, [e["id"]],
+             e.get("agent_id"), frozenset({e.get("agent_id")}))
+            for e in episodes
+        ]
 
     created = 0
     dropped = 0
@@ -267,12 +294,15 @@ def run_consolidation(store, hours: float = 24.0, dry_run: bool = False) -> dict
     def _candidates_for(agent: str | None) -> _LiveSemanticCandidates:
         pool = candidates_by_agent.get(agent)
         if pool is None:
-            pool = _LiveSemanticCandidates(store, agent_id=agent)
+            pool = _LiveSemanticCandidates(store, agent_id=agent, tenant=tenant)
             candidates_by_agent[agent] = pool
         return pool
 
     facts = raw_facts[:_MAX_FACTS_PER_RUN]
-    for obj, fact_source_ids, fact_agent in facts:
+    for obj, fact_source_ids, fact_agent, fact_source_agents in facts:
+        if fact_source_agents != frozenset({fact_agent}):
+            dropped += 1
+            continue
         validated = _valid_fact(obj)
         if validated is None:
             dropped += 1
@@ -288,7 +318,8 @@ def run_consolidation(store, hours: float = 24.0, dry_run: bool = False) -> dict
         if existing_id is not None:
             if not dry_run:
                 store.update_memory(existing_id, content=fact,
-                                    metadata={"confidence": confidence})
+                                    metadata={"confidence": confidence},
+                                    tenant=tenant)
             deduplicated += 1
             continue
         if not dry_run:
@@ -300,7 +331,8 @@ def run_consolidation(store, hours: float = 24.0, dry_run: bool = False) -> dict
                            agent_id=fact_agent,
                            metadata={"origin": "consolidation",
                                      "source_episodes": fact_source_ids,
-                                     "confidence": confidence})
+                                     "confidence": confidence},
+                           tenant=tenant)
         created += 1
     report["facts_created"] = 0 if dry_run else created
     report["facts_dropped"] = dropped
@@ -325,6 +357,6 @@ def run_consolidation(store, hours: float = 24.0, dry_run: bool = False) -> dict
             # the mark phase writes on conn directly: hold the store lock so
             # a concurrent search's authorizer cannot deny the UPDATE (BUG-02)
             with store.locked():
-                _mark_consolidated(store, consumed_ids)
+                _mark_consolidated(store, consumed_ids, tenant=tenant)
     report["took_ms"] = round((time.perf_counter() - t0) * 1000, 2)
     return report

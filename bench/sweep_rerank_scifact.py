@@ -65,7 +65,7 @@ def main() -> None:
     device = "cuda" if torch.cuda.is_available() else "cpu"
     ce = CrossEncoder(rb.CROSS_ENCODER, max_length=512, device=device)
     docs_all, queries = rb.load_beir(DATASET)
-    rels = [set(rel) for (_q, _t, rel) in queries]
+    rels = [rb.relevant_docs(rel) for (_q, _t, rel) in queries]
     print(f"{DATASET}: {len(docs_all)} docs, {len(queries)} queries; "
           f"reranker {rb.CROSS_ENCODER} on {device}", flush=True)
 

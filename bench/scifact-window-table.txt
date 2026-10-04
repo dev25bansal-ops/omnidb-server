@@ -1,3 +1,14 @@
+> **PROVENANCE NOTE (2026-09-30)** - an earlier version of this banner said every
+> stage_recall_at_w value in this file was wrong. **That was wrong.**
+>
+> scifact contains 0 score-0 judgements out of 339. The corrected metric is
+> therefore identical to the old one for every single query, and **every value in
+> this file is correct as published**. No figure below needs changing.
+>
+> The bug (set(rel) keeping score-0 keys in the denominator) only moves numbers
+> where a corpus has score-0 judgements. Census: scifact 0/339 (0.0%), nfcorpus
+> 0/12334 (0.0%), fiqa 0/1706 (0.0%), scidocs 25000/29928 (83.5%). Only scidocs was
+> affected. See bench/rerank-window-results.md and .omni-audit/F15-RECOMPUTE.md
 | first stage | embedder | w | stage recall@w | nDCG@10 base | nDCG@10 reranked | delta | p |
 |---|---|---|---|---|---|---|---|
 | bm25 | - | 25 | 0.8339 | 0.6569 | 0.7052 | +0.0484 | 0.0000 |

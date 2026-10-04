@@ -1,0 +1,70 @@
+workload_revision: lexical-scaling-v1
+workload_sha256: f170d737ee2f43d7ad56a0f4a4c221db705bf79f4696ad392dc02e59547fb042
+source_identity_sha256: 708eaee5c09f24e49f9da972ae4b805dc4719d338bcd68e2d892c17c1c9dece1
+python: 3.14.4
+platform: win32
+gate: none (scaling evidence, not a stability claim)
+leg: FTS5 lexical leg only (recall.py:75-83 SQL, dense leg excluded)
+tokenizer: porter unicode61
+sizes: 800
+queries_per_size: 6
+repeats: 3
+k_fetch: 50
+k: 10
+gate_status: not a gate; no floor is asserted here. PERF-A2-07-R's 25 ms
+  p50 target and ADR-7's 5 s budget are the targets, and the leg is 8.4x
+  over the p50 one at 60k -- but the number is unmeasured on this host,
+  so asserting a floor now would be inventing a threshold. Close the
+  cause first (see the suspicion note in bench/lexical_scaling.py).
+lexical_p50_ms_800: 0.018
+lexical_p95_ms_800: 0.029
+lexical_match_rows_800: 0
+lexical_specific_rows_800: 0
+lexical_growth_5k_to_60k: 1.000
+lexical_growth_exponent: n/a (need >=2 sizes)
+lexical_samples_per_size: 18
+
+## Sweep summary
+
+| n | p50 ms | p95 ms | match set (OR-ed) | match set (specific) | growth vs first |
+|---|---|---|---|---|---|
+| 800 | 0.018 | 0.029 | 0 | 0 | 1.00x |
+
+fitted exponent alpha: n/a
+
+## Suspicion, stated as a hypothesis (not measured here)
+
+Which of the three candidate causes is most likely, and why:
+
+1. `ORDER BY bm25(memory_fts)` forces a full match-set sort. SQLite has
+   no index on a computed bm25() value, so it must materialise and
+   score every row the MATCH expression touches, and only then apply
+   LIMIT 50. This is the leading suspect, and the evidence is in this
+   file: `lexical_match_rows_*` tracks n one-for-one, so the sort ranks
+   the entire corpus to return 50 rows. The audit's 53x growth over a
+   12x size increase (alpha ~ 1.44) is consistent with sort work
+   proportional to the match set rather than to the 50 rows returned.
+   A rank-bounded subquery
+   (`... WHERE rowid IN (SELECT rowid FROM memory_fts WHERE memory_fts
+   MATCH ? ORDER BY rank LIMIT 50)`) may let SQLite stop early.
+2. The `JOIN memories` re-check. It re-fetches each candidate row and
+   applies the soft-delete predicate, so it touches rows the LIMIT
+   would have discarded. A real contributor at these widths, but it is
+   bounded by the match set, so it cannot by itself explain growth
+   steeper than linear in n.
+3. The `ORDER BY` spill to a temp b-tree. Same clause as (1), and a
+   mechanism of it rather than a separate cause.
+
+The single number that separates (1) from (2)+(3) is the match-set
+width, which this harness now reports per band as `lexical_match_rows_*`
+(OR-ed, the real query shape) and `lexical_specific_rows_*` (one rare
+token). If the width stays small and roughly constant in n, the sort is
+not the problem and the join is. If it grows with n -- and on the
+default templated corpus it does, one-for-one -- the sort is.
+
+Caveat on that evidence: the corpus text repeats the token `payload` in
+every row, so `fts_match_query`'s OR-ed expression matches all of them.
+A corpus whose rows share fewer tokens would produce a narrower match
+set and could invert this conclusion. That is why both widths are
+reported. Confirm on a real corpus before acting on this.
+

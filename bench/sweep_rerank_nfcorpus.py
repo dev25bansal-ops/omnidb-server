@@ -237,7 +237,7 @@ def main() -> None:
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     docs, queries = rb.load_beir(DATASET)
-    rels = [set(rel) for (_q, _t, rel) in queries]
+    rels = [rb.relevant_docs(rel) for (_q, _t, rel) in queries]
     print(f"{DATASET}: {len(docs)} docs, {len(queries)} queries; "
           f"reranker {rb.CROSS_ENCODER} on {device}", flush=True)
     results: dict = {"meta": {"ndocs": len(docs), "nqueries": len(queries),

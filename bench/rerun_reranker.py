@@ -44,9 +44,16 @@ _local_hf = HERE / ".cache3" / "hf"
 if _local_hf.is_dir() and (not _hf_home or not Path(_hf_home).exists()):
     os.environ["HF_HOME"] = str(_local_hf)
 
-from research_bench_v3 import (CROSS_ENCODER, EMBEDDERS, K, RERANK_CANDS,
-                               cross_encode_rerank, get_embeddings, load_beir,
-                               ndcg_at_k)
+from research_bench_v3 import (
+    CROSS_ENCODER,
+    EMBEDDERS,
+    RERANK_CANDS,
+    K,
+    cross_encode_rerank,
+    get_embeddings,
+    load_beir,
+    ndcg_at_k,
+)
 
 MAIN_JSON = HERE / "research-v3-results.json"
 EMBEDDER_KEYS = tuple(EMBEDDERS)  # ("minilm", "bge-small", "e5-small", "bge-base")
@@ -66,10 +73,11 @@ def rebuild_top50(ds, emb, cell, cache):
     only if the cell does not already carry a cached ``omni_top50``."""
     if "omni_top50" in cell:
         return cell["omni_top50"], False
+    from research_bench_v3 import _make_embedder
+
     from omnidb_server.config import Config
     from omnidb_server.server import build_stack
     from omnidb_server.vector_index import BruteForceIndex
-    from research_bench_v3 import _make_embedder
 
     docs, queries = load_beir(ds)
     texts = [t for _d, t in docs]

@@ -167,35 +167,41 @@ def test_j08_wal_bytes_in_stats_and_check(store):
     assert chk["wal_bytes"] == s["wal_bytes"]
 
 
-# --- J-10: soak script requires psutil -----------------------------------
+# --- J-10: soak report states RSS honestly -------------------------------
 
-def test_j10_soak_reports_psutil_status_honestly():
-    """J-10: when psutil is missing, soak's report must say `rss: n/a`
-    (not silently pass a growth assertion). And when psutil is present,
-    the report must contain a real RSS value (not 'n/a').
+def test_j10_soak_reports_psutil_status_honestly(tmp_path):
+    """The soak report must state RSS honestly: a real reading, or `n/a`.
 
     The earlier silent-pass bug was: the growth assertion never fired
-    because the RSS variable was None, but the test still reported success.
-    This test makes the reporting contract explicit.
+    because the RSS variable was None, while the test still reported
+    success. This pins the reporting contract on a report the test
+    itself produces, so it cannot be satisfied by a stale artifact.
     """
     import subprocess
-    # Run soak for the minimum 1 minute; assert the report file
-    # always has an `rss:` line and that line is either a real number
-    # (psutil installed) or literally "n/a" (psutil missing / Windows).
-    subprocess.run(
-        [sys.executable, "-m", "bench.soak", "--minutes", "1"],
+
+    report = tmp_path / "soak-report.txt"
+    proc = subprocess.run(
+        [sys.executable, "-m", "bench.soak",
+         "--minutes", "1", "--iterations", "3", "--output", str(report)],
         capture_output=True, text=True,
         cwd=str(Path(__file__).resolve().parents[1]),
         timeout=120,
     )
-    results_path = Path(__file__).resolve().parents[1] / "bench" / "soak-results.txt"
-    assert results_path.exists(), results_path
-    text = results_path.read_text()
-    assert "rss:" in text, text
-    # the line must be either "rss: <number> -> <number>" (psutil present)
-    # or "rss: n/a" (psutil missing on POSIX) — never silent / absent
-    rss_line = next(line for line in text.splitlines() if line.startswith("rss:"))
-    assert ("->" in rss_line) or ("n/a" in rss_line), rss_line
+    assert proc.returncode in (0, 1), proc.stderr[-2000:]
+    assert report.exists(), f"harness wrote no report: {proc.stderr[-2000:]}"
+    text = report.read_text()
+    fields = dict(
+        line.split(": ", 1) for line in text.splitlines() if ": " in line
+    )
+    for key in ("rss_start_mb", "rss_peak_mb", "p95_ratio",
+                "validation_gate_passed"):
+        assert key in fields, f"{key} missing from report:\n{text}"
+    for key in ("rss_start_mb", "rss_peak_mb"):
+        value = fields[key]
+        assert value == "n/a" or float(value) > 0, f"{key}={value!r}"
+    # A missing RSS reading must never masquerade as a passing gate.
+    if fields["rss_start_mb"] == "n/a":
+        assert fields["validation_gate_passed"] == "False", text
 
 
 # --- J-12: consolidation report has consistent shape ----------------------

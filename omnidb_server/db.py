@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 5
 
 # Migration 1 is the base schema. Later schema changes append here as
 # (version, ddl) pairs; PRAGMA user_version tracks the applied head.
@@ -75,7 +75,37 @@ CREATE TABLE IF NOT EXISTS queries (
 CREATE INDEX IF NOT EXISTS queries_created_idx ON queries(created_ms);
 """
 
-MIGRATIONS: list[tuple[int, str]] = [(1, _MIGRATION_1), (2, _MIGRATION_2), (3, _MIGRATION_3)]
+# ADR-08: every row is owned by a tenant. The column defaults to the single
+# tenant so pre-tenant homes keep working unchanged; the boundary is added by
+# W3-4, which makes reads and writes tenant-scoped. NOT NULL because a row
+# with no owner is the current "visible to everyone" defect wearing a new
+# column name.
+_MIGRATION_4 = """
+ALTER TABLE memories ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'default';
+ALTER TABLE queries ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'default';
+CREATE INDEX IF NOT EXISTS memories_tenant_idx ON memories(tenant_id);
+"""
+
+# ADR-08 / W3-3: FTS moves out of the trigger/external-content mechanism into
+# explicit, in-transaction sync by the store write path. The three triggers are
+# dropped, the external-content table (which cannot be manually INSERTed into)
+# is replaced by a standalone FTS5 table, and every row is back-filled. The
+# back-fill covers soft-deleted rows too, matching the trigger semantics: the
+# triggers only removed rows on hard DELETE, and soft-deleted rows stayed
+# searchable and were filtered by the `_SELECTIVE` join.
+_MIGRATION_5 = """
+DROP TRIGGER IF EXISTS memories_ai;
+DROP TRIGGER IF EXISTS memories_ad;
+DROP TRIGGER IF EXISTS memories_au;
+DROP TABLE IF EXISTS memory_fts;
+CREATE VIRTUAL TABLE memory_fts USING fts5(content, tokenize='porter unicode61');
+INSERT INTO memory_fts(rowid, content) SELECT id, content FROM memories;
+"""
+
+MIGRATIONS: list[tuple[int, str]] = [
+    (1, _MIGRATION_1), (2, _MIGRATION_2), (3, _MIGRATION_3), (4, _MIGRATION_4),
+    (5, _MIGRATION_5),
+]
 
 
 class DbError(RuntimeError):
@@ -126,6 +156,8 @@ def _migrate(conn: sqlite3.Connection) -> None:
             )
         if version == 2:
             ddl = _heal_torn_v2(conn, ddl)
+        elif version == 4:
+            ddl = _heal_torn_v4(conn, ddl)
         # Keep DDL, verified postconditions, and the version bump in one
         # transaction. executescript supplies BEGIN but leaves COMMIT to us.
         try:
@@ -136,6 +168,19 @@ def _migrate(conn: sqlite3.Connection) -> None:
                 missing = {"agent_id", "trigger_patterns"} - columns
                 if missing:
                     raise DbError(f"v2 schema missing required columns: {sorted(missing)}")
+            elif version == 4:
+                # ADR-08: never publish v4 while tenant_id is missing on either
+                # tenant-owned table. Table names are literals, not loop
+                # variables — a runtime table name here would be an injection
+                # surface and is provably unnecessary with two tables.
+                mem_cols = {row[1] for row in
+                            conn.execute("PRAGMA table_info(memories)")}
+                qry_cols = {row[1] for row in
+                            conn.execute("PRAGMA table_info(queries)")}
+                if "tenant_id" not in mem_cols:
+                    raise DbError("v4 schema missing tenant_id on memories")
+                if "tenant_id" not in qry_cols:
+                    raise DbError("v4 schema missing tenant_id on queries")
             conn.execute(f"PRAGMA user_version = {version}")
             conn.commit()
         except (sqlite3.Error, DbError) as exc:
@@ -154,6 +199,29 @@ def _heal_torn_v2(conn: sqlite3.Connection, ddl: str) -> str:
     for column in ("agent_id", "trigger_patterns"):
         if column in columns:
             ddl = ddl.replace(f"ALTER TABLE memories ADD COLUMN {column} TEXT;", "")
+    return ddl
+
+
+def _heal_torn_v4(conn: sqlite3.Connection, ddl: str) -> str:
+    """ADR-08: repair an independently applied v4 tenant_id addition.
+
+    The same tear class as v2, but the column is added to two tables, so an
+    interrupted v4 can be missing the column on either. Each already-present
+    column's ADD is skipped; the postcondition in _migrate then verifies both
+    are present before publishing user_version=4.
+    """
+    mem_cols = {row[1] for row in
+                conn.execute("PRAGMA table_info(memories)")}
+    qry_cols = {row[1] for row in
+                conn.execute("PRAGMA table_info(queries)")}
+    if "tenant_id" in mem_cols:
+        ddl = ddl.replace(
+            "ALTER TABLE memories ADD COLUMN tenant_id "
+            "TEXT NOT NULL DEFAULT 'default';", "")
+    if "tenant_id" in qry_cols:
+        ddl = ddl.replace(
+            "ALTER TABLE queries ADD COLUMN tenant_id "
+            "TEXT NOT NULL DEFAULT 'default';", "")
     return ddl
 
 

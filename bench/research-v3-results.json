@@ -31054,71 +31054,85 @@
       "omnidb": {
         "runs": [
           {
-            "p50_ms": 123.78400001034606,
-            "p95_ms": 180.9611000062432,
-            "mean_ms": 126.65856373437967
+            "p50_ms": 165.2751000074204,
+            "p95_ms": 250.71059999754652,
+            "mean_ms": 168.6948316356494
           },
           {
-            "p50_ms": 120.0055999943288,
-            "p95_ms": 169.94580000755377,
-            "mean_ms": 122.23498379638458
+            "p50_ms": 172.5252000032924,
+            "p95_ms": 261.3045000034617,
+            "mean_ms": 179.54526219148613
           },
           {
-            "p50_ms": 119.36149999382906,
-            "p95_ms": 169.23749999841675,
-            "mean_ms": 121.49973996929475
+            "p50_ms": 154.95389999705367,
+            "p95_ms": 228.45730000699405,
+            "mean_ms": 157.02703441358025
           },
           {
-            "p50_ms": 116.97660002391785,
-            "p95_ms": 168.61149997566827,
-            "mean_ms": 119.14876265416999
+            "p50_ms": 151.4586999983294,
+            "p95_ms": 226.17029999673832,
+            "mean_ms": 154.9772609568107
           },
           {
-            "p50_ms": 117.63890000293031,
-            "p95_ms": 169.26590001094155,
-            "mean_ms": 120.1780916662868
+            "p50_ms": 150.21259999775793,
+            "p95_ms": 216.63209999678656,
+            "mean_ms": 153.54816774711645
           }
         ],
         "spread": {
           "p50s": [
-            116.97660002391785,
-            117.63890000293031,
-            119.36149999382906,
-            120.0055999943288,
-            123.78400001034606
-          ]
+            150.21259999775793,
+            151.4586999983294,
+            154.95389999705367,
+            165.2751000074204,
+            172.5252000032924
+          ],
+          "n_ok": 5,
+          "n_requested": 5,
+          "n_failed": 0,
+          "errors": []
         }
       },
       "qdrant": {
         "runs": [
           {
-            "p50_ms": 390.1627000013832,
-            "p95_ms": 484.739699983038,
-            "mean_ms": 363.3917532400422
+            "p50_ms": 105.4465000052005,
+            "p95_ms": 133.88920000579674,
+            "mean_ms": 109.55010030842077
           },
           {
-            "error": "~~~~~~~~~~~~~~~~~~~^^^^^^^\n  File \"C:\\Users\\dev25\\AppData\\Roaming\\Python\\Python314\\site-packages\\qdrant_client\\local\\persistence.py\", line 120, in persist\n    cursor.execute(\n    ~~~~~~~~~~~~~~^\n        \"INSERT OR REPLACE INTO points VALUES (?, ?)\",\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    ...<3 lines>...\n        ),\n        ^^\n    )\n    ^\nsqlite3.OperationalError: disk I/O error\n"
+            "p50_ms": 100.07929999846965,
+            "p95_ms": 125.77529999543913,
+            "mean_ms": 103.55643564769618
           },
           {
-            "error": "-of-00001.parquet\").read()))\n                                                    ~~~~^^\n  File \"C:\\Python314\\Lib\\http\\client.py\", line 500, in read\n    s = self._safe_read(self.length)\n  File \"C:\\Python314\\Lib\\http\\client.py\", line 665, in _safe_read\n    raise IncompleteRead(data.getvalue(), amt - data.tell())\nhttp.client.IncompleteRead: IncompleteRead(11479004 bytes read, 16221813 more expected)\n"
+            "p50_ms": 119.89180000091437,
+            "p95_ms": 149.62400001240894,
+            "mean_ms": 118.31255895062726
           },
           {
-            "p50_ms": 97.13180002290756,
-            "p95_ms": 115.55210000369698,
-            "mean_ms": 97.97044413583389
+            "p50_ms": 107.75040001317393,
+            "p95_ms": 128.31080000614747,
+            "mean_ms": 109.29239259245533
           },
           {
-            "p50_ms": 110.05489999661222,
-            "p95_ms": 379.64989998727106,
-            "mean_ms": 209.30499737602796
+            "p50_ms": 97.18319999228697,
+            "p95_ms": 118.75759999384172,
+            "mean_ms": 99.85855401257903
           }
         ],
         "spread": {
           "p50s": [
-            97.13180002290756,
-            110.05489999661222,
-            390.1627000013832
-          ]
+            97.18319999228697,
+            100.07929999846965,
+            105.4465000052005,
+            107.75040001317393,
+            119.89180000091437
+          ],
+          "n_ok": 5,
+          "n_requested": 5,
+          "n_failed": 0,
+          "errors": []
         }
       }
     },
@@ -41569,6 +41583,16 @@
           1.0
         ]
       }
+    },
+    "_f1_rerun_meta": {
+      "generated_at": "2026-10-01T21:34:42",
+      "repeats": 5,
+      "elapsed_s": 1945.6,
+      "python": "D:\\OMNIDB\\.omni-audit\\venv\\Scripts\\python.exe",
+      "supersedes": "D:\\OMNIDB\\.omni-audit\\f1-superseded-fiqa-latency.json",
+      "why": "F1: 2 of 5 qdrant runs were lost to sqlite3 OperationalError disk I/O in qdrant_client persist(), leaving a 3-point spread with a 390ms outlier. Re-run with qdrant_client in the project venv, temp root on a volume with 73 GB free, and the BEIR corpus cached so a torn download can no longer cost a measured run.",
+      "basis_change": "Different machine state from the 2026-09-08 cell: hnswlib present, MSVC Build Tools installed, C: at 96% used. Both arms come from the same 10 fresh subprocesses, so the omnidb/qdrant comparison is internally consistent, but it is NOT comparable to the older numbers on other corpora.",
+      "note": "omnidb's arm is BruteForceIndex by construction (retrieve_omnidb overwrites store.index at research_bench_v3.py:312); see F32."
     }
   }
 }

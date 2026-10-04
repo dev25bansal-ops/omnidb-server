@@ -13,6 +13,7 @@ from pathlib import Path
 from .db import get_meta, set_meta
 from .store import E_CONSTRAINT, E_NOT_FOUND, E_TYPE, StoreError, _commit_or_rollback
 from .validation import validate_content, validate_trigger_patterns
+from .tenancy import DEFAULT_TENANT
 
 _KINDS = ("episodic", "semantic", "procedural")
 
@@ -73,13 +74,15 @@ def backup_home(store, dest: str | Path, keep: int = 3) -> dict:
             shutil.copy2(src, target / name)
             copied.append(name)
 
-    removed = _rotate_snapshots(dest, keep)
+    removed, prune_errors = _rotate_snapshots(dest, keep)
+    for error in prune_errors:
+        print(f"omnidb-server: could not prune snapshot: {error}", file=sys.stderr)
     return {"dest": str(target), "db_bytes": (target / "omnidb.db").stat().st_size,
-            "sidecars": copied, "pruned": removed,
+            "sidecars": copied, "pruned": removed, "prune_errors": prune_errors,
             "took_ms": round((time.perf_counter() - t0) * 1000, 2)}
 
 
-def _rotate_snapshots(dest: Path, keep: int) -> list[str]:
+def _rotate_snapshots(dest: Path, keep: int) -> tuple[list[str], list[str]]:
     if keep < 1:
         keep = 1
     snapshots = sorted(
@@ -87,31 +90,41 @@ def _rotate_snapshots(dest: Path, keep: int) -> list[str]:
         if p.is_dir() and p.name.startswith("snapshot-")
     )
     removed = []
+    errors = []
     for old in snapshots[:-keep] if len(snapshots) > keep else []:
-        shutil.rmtree(old, ignore_errors=True)
-        removed.append(old.name)
-    return removed
+        try:
+            shutil.rmtree(old)
+        except OSError as exc:
+            errors.append(f"{old.name}: {exc}")
+        else:
+            removed.append(old.name)
+    return removed, errors
+
+
+def _restore_rebuild_artifacts(backups: list[tuple[Path, Path]]) -> None:
+    for source, target in reversed(backups):
+        if target.exists():
+            target.unlink(missing_ok=True)
+        os.replace(source, target)
+
+
+def _remove_rebuild_artifacts(backups: list[tuple[Path, Path]]) -> None:
+    for source, _ in reversed(backups):
+        source.unlink(missing_ok=True)
 
 
 def _embedder_from_stored_name(name: str):
-    """Rebuild the embedder recorded in `meta.embedder` so a re-embed can open
-    the home with its current identity (E-01)."""
-    from .embeddings import EmbeddingError, FastEmbedEmbedder, HashingEmbedder
+    """Rebuild the embedder recorded in `meta.embedder` for a migration."""
+    from .embeddings import embedder_from_name
 
-    if name.startswith("fastembed:"):
-        try:
-            return FastEmbedEmbedder(model_name=name.split(":", 1)[1])
-        except Exception as exc:
-            raise EmbeddingError(
-                f"cannot load the home's current embedder {name!r} "
-                f"(install the `semantic` extra / restore HF_HOME cache): {exc}"
-            ) from exc
-    if name.startswith("hashing"):
-        return HashingEmbedder()
-    raise StoreError(
-        f"this home was built with embedder {name!r}, which this version "
-        "cannot load; re-embedding is not possible", E_CONSTRAINT,
-    )
+    try:
+        return embedder_from_name(name)
+    except StoreError as exc:
+        raise StoreError(
+            f"this home was built with embedder {name!r}, which this version "
+            "cannot load; re-embedding is not possible",
+            exc.code,
+        ) from exc
 
 
 def reembed_home(home: Path, target_embedder, *, assume_yes: bool = False) -> dict:
@@ -131,6 +144,18 @@ def reembed_home(home: Path, target_embedder, *, assume_yes: bool = False) -> di
     from .server import _acquire_home_lock, _release_home_lock
     from .store import _SELECTIVE, MemoryStore
     from .vector_index import BruteForceIndex, HnswlibIndex, VectorIndexError, open_vector_index
+
+    def stage_rebuild(path: Path) -> Path | None:
+        if not path.exists():
+            return None
+        tmp = path.with_name(f".{path.name}.rebuild-{os.getpid()}")
+        try:
+            os.replace(path, tmp)
+        except OSError:
+            if tmp.exists():
+                tmp.unlink(missing_ok=True)
+            raise
+        return tmp
 
     t0 = time.perf_counter()
     cfg = Config.load(home)
@@ -160,7 +185,6 @@ def reembed_home(home: Path, target_embedder, *, assume_yes: bool = False) -> di
 
         emb_src = _embedder_from_stored_name(stored_name)
         if emb_src.name != stored_name:
-            # e.g. meta said "hashing-v1"; the factory returns that exact name
             raise StoreError(
                 f"stored embedder {stored_name!r} != loadable {emb_src.name!r}",
                 E_CONSTRAINT,
@@ -203,16 +227,21 @@ def reembed_home(home: Path, target_embedder, *, assume_yes: bool = False) -> di
             }))
             home_dir = store._home()
             fresh: HnswlibIndex | BruteForceIndex
+            backup_paths: list[tuple[Path, Path]] = []
             if index_kind == "hnsw":
+                hnsw_path = home_dir / "index.hnsw"
+                deleted_path = home_dir / "index.hnsw.deleted.json"
+                for path in (hnsw_path, deleted_path):
+                    staged = stage_rebuild(path)
+                    if staged is not None:
+                        backup_paths.append((staged, path))
                 try:
-                    hnsw_path = home_dir / "index.hnsw"
-                    hnsw_path.unlink(missing_ok=True)
-                    (home_dir / "index.hnsw.deleted.json").unlink(missing_ok=True)
                     fresh = HnswlibIndex(hnsw_path, target_embedder.dim,
                                          count_hint=len(rows),
                                          ef_search=cfg.ef_search)
                 except VectorIndexError:
-                    # hnswlib unavailable: land on brute and say so
+                    _restore_rebuild_artifacts(backup_paths)
+                    backup_paths = []
                     print(
                         "omnidb-server: hnswlib unavailable; the migrated "
                         "index will use the brute-force backend",
@@ -221,8 +250,11 @@ def reembed_home(home: Path, target_embedder, *, assume_yes: bool = False) -> di
                     fresh = BruteForceIndex(home_dir / "vectors.npz",
                                             target_embedder.dim)
             else:
-                fresh = BruteForceIndex(home_dir / "vectors.npz",
-                                        target_embedder.dim)
+                path = home_dir / "vectors.npz"
+                staged = stage_rebuild(path)
+                if staged is not None:
+                    backup_paths.append((staged, path))
+                fresh = BruteForceIndex(path, target_embedder.dim)
 
             # dirty flag first (ARCH-02 discipline): a crash mid-loop leaves
             # index_dirty=1 so the next open reconciles
@@ -243,6 +275,11 @@ def reembed_home(home: Path, target_embedder, *, assume_yes: bool = False) -> di
             # in ONE transaction. The home is never openable with the new
             # sidecar under the old identity (or the reverse); a crash here
             # leaves the marker set, so the next open rebuilds from rows.
+            #
+            # BUG-A1-04: the staged backups used to be removed *before* this
+            # transaction, so a failure at the last fallible step left a home
+            # whose vectors might not match its stored rows and no rollback
+            # copy. Cleanup now runs only after the commit succeeds.
             try:
                 store.conn.execute(
                     "INSERT INTO meta(key, value) VALUES ('embedder', ?) "
@@ -260,6 +297,7 @@ def reembed_home(home: Path, target_embedder, *, assume_yes: bool = False) -> di
                 store.conn.commit()
             except sqlite3.Error as exc:
                 raise _commit_or_rollback(store.conn, exc) from exc
+            _remove_rebuild_artifacts(backup_paths)
             return {
                 "migrated": len(rows),
                 "from": stored_name,
@@ -302,8 +340,8 @@ def _build_memory_where(filters: dict) -> tuple[str, list]:
     Returns a clause plus a small helper that rewrites it for use in a JOIN
     (by aliasing each column reference to a specific edge endpoint alias).
     """
-    clauses = ["deleted_ms IS NULL", "superseded_by IS NULL"]
-    params: list = []
+    clauses = ["deleted_ms IS NULL", "superseded_by IS NULL", "tenant_id = ?"]
+    params: list = [filters["tenant"]]
     if filters.get("since_ms") is not None:
         clauses.append("created_ms >= ?")
         params.append(int(filters["since_ms"]))
@@ -324,7 +362,8 @@ def _aliased_where(clause: str, alias: str) -> str:
     """Prefix the bare column names that appear in a memory WHERE clause
     with an alias so it can be used in an edge JOIN."""
     out = clause
-    for column in ("deleted_ms", "superseded_by", "created_ms", "agent_id", "kind"):
+    for column in ("deleted_ms", "superseded_by", "created_ms", "agent_id",
+                   "tenant_id", "kind"):
         out = out.replace(column, f"{alias}.{column}")
     return out
 
@@ -332,7 +371,8 @@ def _aliased_where(clause: str, alias: str) -> str:
 def export_jsonl(store, path: str | Path, *,
                  since_ms: int | None = None,
                  agent_id: str | None = None,
-                 kind: str | None = None) -> dict:
+                   kind: str | None = None,
+                   tenant: str = DEFAULT_TENANT) -> dict:
     """Dump live memories then their edges as JSONL, one record per line.
 
     Atomic: writes to a sibling temp, fsyncs, renames — a crash mid-write
@@ -343,7 +383,8 @@ def export_jsonl(store, path: str | Path, *,
     memory filter (so an import can satisfy the FK constraints).
     """
     path = Path(path)
-    filters = {"since_ms": since_ms, "agent_id": agent_id, "kind": kind}
+    filters = {"since_ms": since_ms, "agent_id": agent_id, "kind": kind,
+               "tenant": tenant}
     mem_where, mem_params = _build_memory_where(filters)
     memories = 0
     edges = 0
@@ -391,7 +432,8 @@ def export_jsonl(store, path: str | Path, *,
             "filters": filters}
 
 
-def import_jsonl(store, path: str | Path) -> dict:
+def import_jsonl(store, path: str | Path, *,
+                  tenant: str = DEFAULT_TENANT) -> dict:
     """Restore an export into an EMPTY home.
 
     AUDIT-I04: original memory ids are preserved explicitly, every record
@@ -488,19 +530,29 @@ def import_jsonl(store, path: str | Path) -> dict:
     try:
         for record in memories:
             patterns = record.get("trigger_patterns")
+            mid = int(record["id"])
+            content = record["content"]
             store.conn.execute(
                 "INSERT INTO memories(id, kind, content, metadata, created_ms, "
-                "access_count, agent_id, trigger_patterns) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "access_count, agent_id, trigger_patterns, tenant_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
-                    int(record["id"]),
+                    mid,
                     record.get("kind", "semantic"),
-                    record["content"],
+                    content,
                     json.dumps(record.get("metadata") or {}),
                     int(record.get("created_ms") or now_ms),
                     int(record.get("access_count") or 0),
                     record.get("agent_id"),
                     json.dumps(patterns) if patterns is not None else None,
+                        tenant,
                 ),
+            )
+            # ADR-08 / W3-3: import writes memories directly, so it must sync
+            # FTS itself — the triggers that used to do this are gone.
+            store.conn.execute(
+                "INSERT INTO memory_fts(rowid, content) VALUES (?, ?)",
+                (mid, content),
             )
         applied_edges = 0
         for record in edges:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import functools
 from contextlib import contextmanager
 from pathlib import Path
+import sys
 
 # Tools run on anyio worker threads: sync store operations would otherwise
 # execute on the event loop and block pings/other requests for their full
@@ -10,16 +11,37 @@ from pathlib import Path
 import anyio
 
 from .store import E_CONSTRAINT, E_NOT_FOUND, MemoryStore, StoreError
+from .tenancy import DEFAULT_TENANT
 
 
 async def _call(fn, /, *args, **kwargs):
     return await anyio.to_thread.run_sync(functools.partial(fn, *args, **kwargs))
 
 
-def create_mcp(store):
-    from mcp.server.fastmcp import FastMCP
+def _stdio_tenant() -> str:
+    """The tenant for a stdio request (ADR-08).
 
-    mcp = FastMCP("omnidb")
+    stdio carries no headers: one process, one pipe, one identity, so there is no
+    token to read and every call belongs to the deployment's single tenant. This is
+    the only path that may resolve without a credential.
+
+    The streamable-HTTP transport passes `http_server.current_tenant` instead, which
+    raises rather than defaulting. The distinction is load-bearing: a shared
+    fail-open default here would hand every HTTP request the default tenant.
+    """
+    return DEFAULT_TENANT
+
+
+def attach_tools(mcp, store, tenant_resolver=None):
+    """Register OmniDB's tool surface on an MCP server.
+
+    Shared by the stdio transport (`create_mcp`) and the streamable-HTTP
+    transport (`http_server.run_http`). Keeping one definition is load-bearing:
+    a tool added to one transport but not the other is a tool whose tenant
+    check is missing on that transport.
+    """
+    resolve_tenant = tenant_resolver or _stdio_tenant
+
 
     @mcp.tool()
     async def remember(content: str, kind: str = "semantic",
@@ -35,7 +57,8 @@ def create_mcp(store):
         """
         return await _call(store.remember, content, kind=kind, metadata=metadata,
                            links=links, agent_id=agent_id,
-                           trigger_patterns=trigger_patterns)
+                           trigger_patterns=trigger_patterns,
+                           tenant=resolve_tenant())
 
     @mcp.tool()
     async def recall(query: str, k: int = 5, kind: str | None = None,
@@ -47,12 +70,13 @@ def create_mcp(store):
         reranker optionally reorders results via an omnidb_server.rerank REGISTRY name.
         """
         return await _call(store.recall, query, k=k, kind=kind, k_fetch=k_fetch,
-                           agent_id=agent_id, reranker=reranker)
+                           agent_id=agent_id, reranker=reranker,
+                           tenant=resolve_tenant())
 
     @mcp.tool()
     async def search(sql: str) -> dict:
         """Run a read-only SELECT/WITH statement against SQLite (tables: memories, edges, meta)."""
-        return await _call(store.search, sql)
+        return await _call(store.search, sql, tenant=resolve_tenant())
 
     @mcp.tool()
     async def schema() -> dict:
@@ -63,24 +87,26 @@ def create_mcp(store):
     async def related(memory_id: int, max_hops: int = 2,
                       label: str | None = None) -> list[dict]:
         """Graph walk from a memory through its links (recursive CTE, undirected)."""
-        return await _call(store.related, memory_id, max_hops=max_hops, label=label)
+        return await _call(store.related, memory_id, max_hops=max_hops,
+                           label=label, tenant=resolve_tenant())
 
     @mcp.tool()
     async def update_memory(memory_id: int, content: str | None = None,
                             metadata: dict | None = None) -> dict:
         """Edit a memory's content (re-embeds and reindexes) and/or merge metadata."""
         return await _call(store.update_memory, memory_id, content=content,
-                           metadata=metadata)
+                           metadata=metadata, tenant=resolve_tenant())
 
     @mcp.tool()
     async def forget(memory_id: int) -> dict:
         """Soft-delete a memory so it never appears in recall again."""
-        return await _call(store.forget, memory_id)
+        return await _call(store.forget, memory_id, tenant=resolve_tenant())
 
     @mcp.tool()
     async def forget_many(memory_ids: list[int]) -> dict:
         """Soft-delete several memories in one call; reports ids that were missing."""
-        return await _call(store.forget_many, memory_ids)
+        return await _call(store.forget_many, memory_ids,
+                           tenant=resolve_tenant())
 
     @mcp.tool()
     async def consolidate(hours: float = 24.0, dry_run: bool = False) -> dict:
@@ -89,16 +115,34 @@ def create_mcp(store):
         Episodes are extracted in chunks; a failed chunk retries alone on the
         next run while the others commit. dry_run=True reports what would be
         written without storing anything (still spends LLM calls when one is
-        configured)."""
+        configured).
+
+        Scoped to the calling tenant: the episodes read, the facts written and
+        the rows marked consumed all carry that tenant, so a run never distils
+        one tenant into another or sends another tenant's transcript to the
+        LLM endpoint."""
         from .consolidate import run_consolidation
 
-        return await _call(run_consolidation, store, hours, dry_run)
+        return await _call(run_consolidation, store, hours, dry_run,
+                           tenant=resolve_tenant())
 
     @mcp.tool()
     async def stats() -> dict:
         """Database statistics: counts by kind, edges, embedder/index info, file sizes."""
-        return await _call(store.stats)
+        return await _call(store.stats, tenant=resolve_tenant())
 
+
+def create_mcp(store):
+    """Build the stdio MCP server.
+
+    Single-tenant: the store runs as one implicit tenant (see
+    `omnidb_server.tenancy.single_tenant`), so no credential resolution happens
+    on this transport. The tool surface is identical to the HTTP transport.
+    """
+    from mcp.server.fastmcp import FastMCP
+
+    mcp = FastMCP("omnidb")
+    attach_tools(mcp, store)
     return mcp
 
 
@@ -169,7 +213,8 @@ def open_read_only_store(cfg=None):
     from .config import Config
     from .db import get_meta
     from .embeddings import make_embedder
-    from .vector_index import BruteForceIndex, open_vector_index
+    from .vector_index import (BruteForceIndex, VectorIndexError,
+                            open_vector_index)
 
     cfg = cfg or Config.load()
     db_path = cfg.home / "omnidb.db"
@@ -189,7 +234,19 @@ def open_read_only_store(cfg=None):
     try:
         index = open_vector_index(cfg.home, index_kind, embedder.dim, count_hint,
                                   ef_search=cfg.ef_search)
-    except Exception:
+    except VectorIndexError as exc:
+        # ARCH-04 made the corrupt-sidecar fallback say why on stderr. This is
+        # the last resort ABOVE that, and it used to be a bare `except Exception`
+        # that printed nothing - so a TypeError raised inside the index layer and a
+        # genuinely unusable index were indistinguishable, and the operator saw a
+        # store that looked healthy. Narrowed to the index layer own signal: a
+        # programming error now propagates instead of being laundered into a silent
+        # downgrade (F13).
+        print(
+            f"omnidb-server: read-only open could not use the {index_kind!r} "
+  f"index ({exc}); falling back to brute force",
+            file=sys.stderr,
+        )
         index = BruteForceIndex(cfg.home / "vectors.npz", embedder.dim)
     return MemoryStore(conn, embedder, index, cfg, read_only=True)
 

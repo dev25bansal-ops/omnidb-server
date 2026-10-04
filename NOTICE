@@ -1,0 +1,43 @@
+OmniDB - omnidb-server
+Copyright 2026 The OmniDB Authors
+
+This product includes software developed by the OmniDB project.
+
+Licensed under the Apache License, Version 2.0 (the "License"); you may not use
+this file except in compliance with the License. You may obtain a copy of the
+License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software distributed
+under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
+CONDITIONS OF ANY KIND, either express or implied. See the License for the
+specific language governing permissions and limitations under the License.
+
+--------------------------------------------------------------------------
+Third-party content
+--------------------------------------------------------------------------
+
+This distribution contains no vendored third-party source code. Runtime and
+optional dependencies (mcp, numpy, httpx, hnswlib, fastembed) are installed
+from PyPI under their own licenses and are not redistributed here.
+
+--------------------------------------------------------------------------
+Note on benchmark corpora (flagged, not resolved)
+--------------------------------------------------------------------------
+
+Apache-2.0 carries an express patent grant (Section 3) and a NOTICE
+propagation requirement (Section 4(d)). Neither is affected by anything in this
+file, but they constrain redistribution if third-party data is ever bundled.
+
+`bench/` currently references external benchmark corpora (NFCorpus, SciDocs,
+SciFact qrels) by name and expects them to be supplied separately by whoever
+runs the benchmarks. If any such corpus is ever vendored into `bench/`, its
+terms must be checked for compatibility with Apache-2.0 *before* it is
+committed. Some corpora carry non-commercial or share-alike terms that are
+incompatible with Apache-2.0 redistribution, and vendoring one would place
+the whole distribution at risk rather than just that data file.
+
+This is recorded as a known open question, deliberately unresolved. Resolving
+it requires a maintainer decision plus a per-corpus license review, not a
+packaging change.

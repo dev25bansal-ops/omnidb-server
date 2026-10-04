@@ -8,29 +8,16 @@ Outputs:
   - Spearman rho between weak-stage recall headroom and CE delta
 All numbers here are recomputed from per-query arrays, nothing is hand-entered.
 """
-import json, math
+import json
+
 import numpy as np
-from scipy.stats import wilcoxon, spearmanr
+from scipy.stats import spearmanr
 
-def paired_wilcoxon(a, b):
-    a = np.asarray(a); b = np.asarray(b)
-    delta = a - b
-    nonzero = delta[delta != 0]
-    if len(nonzero) == 0:
-        return 1.0
-    stat = wilcoxon(nonzero, alternative="two-sided", method="approx")
-    return float(stat.pvalue)
 
-def holm(pvalues):
-    ordered = sorted(pvalues.items(), key=lambda kv: kv[1])
-    m = len(ordered); adjusted, running = {}, 0.0
-    for i, (name, p) in enumerate(ordered):
-        running = max(running, min(1.0, p * (m - i)))
-        adjusted[name] = running
-    return adjusted
-
+from _stats import holm, paired_wilcoxon
 # ---- locate the four window JSONs ------------------------------------------
 import os
+
 B = "D:/OMNIDB/omnidb-server/bench"
 files = {
     "fiqa":     os.path.join(B, "rerank-window-results.json"),
@@ -75,7 +62,7 @@ computed = []
 for (corpus, label, skey, w, pub_d, pub_p) in rows:
     d = json.load(open(files[corpus], encoding="utf-8"))
     base, rr = get_cell(d, skey, w)
-    p = paired_wilcoxon(rr, base)   # reranked vs base
+    p = paired_wilcoxon(rr, base)[0]   # reranked vs base
     delta = float(np.mean(rr) - np.mean(base))
     name = f"{corpus}/{label}/w{w}"
     raw[name] = p
@@ -92,7 +79,9 @@ print("TABLE II RECOMPUTED (raw p recomputed via paired Wilcoxon, method='approx
 print("=" * 100)
 print(f"{'row':<28}{'n':>5}{'delta':>9}{'p_raw':>10}{'pH_joint':>10}{'pH_bm25':>10}{'pH_hyb':>10}  pub_p")
 for (name, corpus, label, skey, w, n, delta, p, pub_d, pub_p) in computed:
-    jb = joint[name]; fb = fam_bm25.get(name, float('nan')); fh = fam_hyb.get(name, float('nan'))
+    jb = joint[name]
+    fb = fam_bm25.get(name, float('nan'))
+    fh = fam_hyb.get(name, float('nan'))
     print(f"{name:<28}{n:>5}{delta:>+9.4f}{p:>10.4f}{jb:>10.4f}{fb:>10.4f}{fh:>10.4f}  {pub_p}")
 
 # ---- surviving query counts (dropped queries, point 15) ---------------------
@@ -120,7 +109,8 @@ for corpus in ["nfcorpus", "scifact", "scidocs", "fiqa"]:
         h = grid[corpus][emb]["omnidb"]["per_query"]
         c = grid[corpus][emb]["omnidb-ce"]["per_query"]
         d = np.asarray(c) - np.asarray(h)
-        imp = int((d > 0).sum()); harm = int((d < 0).sum())
+        imp = int((d > 0).sum())
+        harm = int((d < 0).sum())
         n = len(d)
         all_deltas_by_cell[f"{corpus}/{emb}"] = d
         print(f"{corpus+'/'+emb:<22}{n:>5}{100*imp/n:>10.1f}%{100*harm/n:>8.1f}%{np.median(d):>+9.4f}{np.mean(d):>+9.4f}  {imp:>5} {harm:>5}")
@@ -128,6 +118,7 @@ for corpus in ["nfcorpus", "scifact", "scidocs", "fiqa"]:
 # combined ECDF data point (all 16 cells pooled) for the figure
 pooled = np.concatenate(list(all_deltas_by_cell.values()))
 import json as _j
+
 out_ecdf = {
     "cells": {k: v.tolist() for k, v in all_deltas_by_cell.items()},
     "pooled": pooled.tolist(),
@@ -151,13 +142,15 @@ for corpus, skey_b, skey_h in [("fiqa","bm25","bge-base"),("nfcorpus","bm25","bg
     # bm25 stage recall@100
     bm25_r100 = bb["100"]["stage_recall_at_w"]
     # hybrid (bge-base) stage recall@100
-    hn = d[skey_h]; hc = hn["cells"] if "cells" in hn else hn
+    hn = d[skey_h]
+    hc = hn["cells"] if "cells" in hn else hn
     hyb_r100 = hc["100"]["stage_recall_at_w"]
     base, rr = bb["100"]["base_ndcg10"], bb["100"]["rerank_ndcg10"]
     ce_delta = float(np.mean(rr) - np.mean(base))
     headroom = hyb_r100 - bm25_r100
     pts.append((corpus, bm25_r100, hyb_r100, headroom, ce_delta))
     print(f"{corpus:<10} bm25_r100={bm25_r100:.4f}  hyb_r100={hyb_r100:.4f}  headroom={headroom:+.4f}  ce_delta={ce_delta:+.4f}")
-hs = [p[3] for p in pts]; ds = [p[4] for p in pts]
+hs = [p[3] for p in pts]
+ds = [p[4] for p in pts]
 rho, pval = spearmanr(hs, ds)
 print(f"\nSpearman rho = {rho:.3f}  (p={pval:.4f})  over {len(pts)} weak-stage cells")

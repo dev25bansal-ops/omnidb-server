@@ -17,16 +17,31 @@ def test_synchronous_normal_and_busy_timeout(store):
     assert store.conn.execute("PRAGMA busy_timeout").fetchone()[0] == 5000
 
 
-def test_fts_trigger_sync(store):
-    store.conn.execute(
-        "INSERT INTO memories(kind, content, metadata, created_ms) "
-        "VALUES ('semantic', 'zebra migrations across the serengeti', '{}', 1)"
-    )
-    store.conn.commit()
+def test_fts_explicit_sync(store):
+    """ADR-08 / W3-3: FTS is synchronised by the write path, not triggers.
+
+    The triple of external-content triggers (`memories_ai/ad/au`) was removed.
+    This pins the replacement: a memory written through the store API is
+    searchable through FTS, which is the only contract that matters to the
+    retrieval path.
+    """
+    store.remember("zebra migrations across the serengeti")
     hit = store.conn.execute(
         "SELECT rowid FROM memory_fts WHERE memory_fts MATCH 'serengeti'"
     ).fetchone()
     assert hit is not None
+
+
+def test_fts_content_update_keeps_postings_consistent(store):
+    """A content edit replaces the FTS posting, not appends a second one."""
+    mid = store.remember("initial wording")["id"]
+    store.update_memory(mid, content="revised phrasing")
+    assert store.conn.execute(
+        "SELECT rowid FROM memory_fts WHERE memory_fts MATCH 'initial'"
+    ).fetchone() is None
+    assert store.conn.execute(
+        "SELECT rowid FROM memory_fts WHERE memory_fts MATCH 'revised'"
+    ).fetchone() is not None
 
 
 def test_meta_roundtrip(store):

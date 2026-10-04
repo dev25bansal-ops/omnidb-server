@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 import time
+
+import pytest
 
 
 def test_remember_many_basic(store):
@@ -59,6 +62,8 @@ def test_remember_many_with_agent_and_trigger(store):
     assert json.loads(by_id[results[3]["id"]]["trigger_patterns"]) == ["delta", "river"]
 
 
+@pytest.mark.perf
+@pytest.mark.skipif(os.environ.get("OMNIDB_RUN_PERF") != "1", reason="perf gate disabled; set OMNIDB_RUN_PERF=1 to run")
 def test_remember_many_throughput(store):
     n = 500
     items = [{"content": f"batch item {i}"} for i in range(n)]

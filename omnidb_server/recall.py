@@ -46,11 +46,17 @@ def _compiled_pattern(pat: str) -> re.Pattern | None:
 
 
 def run_recall(store, query: str, k: int, kind, k_fetch,
-               agent_id, reranker, log_query: bool = False) -> list[dict]:
+               agent_id, reranker, log_query: bool = False,
+               tenant: str = "default") -> list[dict]:
     """AUDIT-I08: all legs select live rows of the requested kind/scope.
 
     None means no kind/scope restriction; an empty agent_id is a supplied
     scope and matches only rows carrying that exact empty string.
+
+    ADR-08: `tenant` is a hard equality on every leg. It is passed down from
+    the authenticated request (never sourced from the caller), and every query
+    here fences rows by `tenant_id = ?` BEFORE any other predicate — so there
+    is no query shape that escapes the tenant column.
     """
     t0 = time.perf_counter()
     if k < 1:
@@ -67,6 +73,10 @@ def run_recall(store, query: str, k: int, kind, k_fetch,
     qvec = store.embedder.encode([query])[0]
     dense_ids = [mid for mid, _score in store.index.query(qvec, fetch)]
 
+    # ADR-08: tenant is fenced first — every candidate is narrowed to the
+    # tenant's own rows before kind or agent scoping, so a foreign tenant's row
+    # can never surface regardless of the other predicates.
+    tenant_cond = "AND m.tenant_id = ? "
     agent_cond = "AND (? IS NULL OR m.agent_id = ?) "
     agent_params: list = [agent_id, agent_id]
     match_expr = fts_match_query(query)
@@ -76,10 +86,11 @@ def run_recall(store, query: str, k: int, kind, k_fetch,
             "SELECT f.rowid FROM memory_fts f "
             "JOIN memories m ON m.id = f.rowid "
             f"WHERE memory_fts MATCH ? AND m.{_SELECTIVE} "
+            + tenant_cond +
             "AND (? IS NULL OR m.kind = ?) "
             + agent_cond +
             "ORDER BY bm25(memory_fts) LIMIT ?",
-            (match_expr, kind, kind, *agent_params, fetch),
+            (match_expr, tenant, kind, kind, *agent_params, fetch),
         ).fetchall()
         sparse_ids = [int(r["rowid"]) for r in rows]
 
@@ -96,9 +107,10 @@ def run_recall(store, query: str, k: int, kind, k_fetch,
             placeholders = ",".join("?" * len(part))
             fused_rows.extend(store.conn.execute(
                 f"SELECT * FROM memories WHERE id IN ({placeholders}) "
-                f"AND {_SELECTIVE} AND (? IS NULL OR kind = ?) "
+                f"AND {_SELECTIVE} AND tenant_id = ? "
+                f"AND (? IS NULL OR kind = ?) "
                 "AND (? IS NULL OR agent_id = ?)",
-                [*part, kind, kind, agent_id, agent_id],
+                [*part, tenant, kind, kind, agent_id, agent_id],
             ).fetchall())
         fused_rows.sort(key=lambda row: (-fused[row["id"]], row["id"]))
         fused_rows = fused_rows[:max(k * 4, k)]
@@ -141,12 +153,20 @@ def run_recall(store, query: str, k: int, kind, k_fetch,
     if len(query) <= _MAX_TRIGGER_QUERY_CHARS:
         # AUDIT-I06: oversized queries skip trigger matching rather than
         # feeding unbounded input to a backtracking engine.
+        # The two kind predicates in this query are a conjunction and BOTH are
+        # load-bearing, which is not obvious: one restricts rows to procedural
+        # skills, the other is the caller scope filter. Together they mean
+        # "procedural rows, when the caller asked for procedural or for no kind
+        # at all". Deleting either changes behaviour - dropping the hardcoded one
+        # lets a kind=semantic recall return procedural trigger rows, because the
+        # surviving clause compares the COLUMN to the literal and so is true for
+        # every procedural row. Kept deliberately, not as an oversight.
         pat_rows = store.conn.execute(
             "SELECT id, trigger_patterns FROM memories "
             "WHERE trigger_patterns IS NOT NULL "
-            f"AND {_SELECTIVE} AND kind = 'procedural' "
+            f"AND {_SELECTIVE} AND tenant_id = ? AND kind = 'procedural' "
             "AND (? IS NULL OR kind = ?) AND (? IS NULL OR agent_id = ?)",
-            [kind, kind, agent_id, agent_id],
+            [tenant, kind, kind, agent_id, agent_id],
         ).fetchall()
     triggered: set[int] = set()
     evaluations = 0
@@ -175,8 +195,9 @@ def run_recall(store, query: str, k: int, kind, k_fetch,
     if missing:
         placeholders = ",".join("?" * len(missing))
         extra_rows = store.conn.execute(
-            f"SELECT * FROM memories WHERE id IN ({placeholders})",
-            sorted(missing),
+            f"SELECT * FROM memories WHERE id IN ({placeholders}) "
+            f"AND {_SELECTIVE} AND tenant_id = ?",
+            [*sorted(missing), tenant],
         ).fetchall()
         for row in extra_rows:
             score, recency, freq = final_score(

@@ -116,60 +116,8 @@ def embed(texts: list[str], spec: dict, is_query: bool) -> np.ndarray:
 
 # ---------------------------------------------------------------- metrics --
 
-def dcg_at_k(gains: list[float], k: int) -> float:
-    return sum(g / math.log2(i + 2) for i, g in enumerate(gains[:k]))
-
-
-def ndcg_at_k(ranked_doc_ids: list[str], relevant: dict[str, int], k: int) -> float:
-    gains = [float(relevant.get(d, 0)) for d in ranked_doc_ids[:k]]
-    ideal = sorted(relevant.values(), reverse=True)
-    idcg = dcg_at_k([float(g) for g in ideal], k)
-    return dcg_at_k(gains, k) / idcg if idcg > 0 else 0.0
-
-
-def recall_at_k(ranked: list[str], relevant: set[str], k: int) -> float:
-    if not relevant:
-        return 0.0
-    return len(set(ranked[:k]) & relevant) / len(relevant)
-
-
-def bootstrap_ci(per_query: list[float], n: int = BOOTSTRAP_N,
-                 seed: int = RNG_SEED) -> tuple[float, float, float]:
-    """95% CI over the query population via percentile bootstrap."""
-    arr = np.asarray(per_query, dtype=np.float64)
-    rng = np.random.default_rng(seed)
-    means = rng.choice(arr, size=(n, len(arr)), replace=True).mean(axis=1)
-    return float(arr.mean()), float(np.percentile(means, 2.5)), \
-        float(np.percentile(means, 97.5))
-
-
-def paired_wilcoxon(a: list[float], b: list[float]):
-    """Two-sided Wilcoxon signed-rank on per-query deltas + rank-biserial."""
-    from scipy.stats import wilcoxon
-
-    delta = np.asarray(a) - np.asarray(b)
-    nonzero = delta[delta != 0]
-    if len(nonzero) == 0:
-        return 1.0, 0.0
-    stat = wilcoxon(nonzero, alternative="two-sided", method="approx")
-    # rank-biserial from signed ranks
-    ranks = np.argsort(np.argsort(np.abs(nonzero))) + 1
-    rp = ranks[nonzero > 0].sum()
-    rm = ranks[nonzero < 0].sum()
-    rb = (rp - rm) / ranks.sum()
-    return float(stat.pvalue), float(rb)
-
-
-def holm(pvalues: dict[str, float]) -> dict[str, float]:
-    ordered = sorted(pvalues.items(), key=lambda kv: kv[1])
-    m = len(ordered)
-    adjusted, running = {}, 0.0
-    for i, (name, p) in enumerate(ordered):
-        running = max(running, min(1.0, p * (m - i)))
-        adjusted[name] = running
-    return adjusted
-
-
+from _stats import (bootstrap_ci, holm, ndcg_at_k,
+                   paired_wilcoxon, recall_at_k)
 # ---------------------------------------------------------------- engines --
 
 class _FixedVecEmbedder:
@@ -215,7 +163,7 @@ def bench_omnidb(docs, queries, vecs, qvecs, home: Path) -> dict:
         hits = store.recall(qtext, k=K)
         ranked = [docs[h["id"] - 1][0] for h in hits]
         per_query.append(ndcg_at_k(ranked, rel, K))
-        per_query_recall.append(recall_at_k(ranked, set(rel), K))
+        per_query_recall.append(recall_at_k(ranked, {d for d, s in rel.items() if s > 0}, K))
     store.close()
     return {"per_query": per_query, "per_query_recall": per_query_recall}
 
@@ -250,7 +198,7 @@ def bench_sqlite_vec(docs, queries, vecs, qvecs, home: Path):
         ).fetchall()
         ranked = [docs[int(r[0])][0] for r in rows]
         per_q.append(ndcg_at_k(ranked, rel, K))
-        per_qr.append(recall_at_k(ranked, set(rel), K))
+        per_qr.append(recall_at_k(ranked, {d for d, s in rel.items() if s > 0}, K))
     conn.close()
     return per_q, per_qr
 
@@ -271,7 +219,7 @@ def bench_lancedb(docs, queries, vecs, qvecs, home: Path):
         res = tbl.search(np.asarray(qv, dtype=np.float32)).limit(K).to_list()
         ranked = [r["doc_id"] for r in res]
         per_q.append(ndcg_at_k(ranked, rel, K))
-        per_qr.append(recall_at_k(ranked, set(rel), K))
+        per_qr.append(recall_at_k(ranked, {d for d, s in rel.items() if s > 0}, K))
     return per_q, per_qr
 
 
@@ -290,7 +238,7 @@ def bench_qdrant(docs, queries, vecs, qvecs, home: Path):
         res = client.query_points("mem", query=[float(x) for x in qv], limit=K)
         ranked = [p.payload["doc_id"] for p in res.points]
         per_q.append(ndcg_at_k(ranked, rel, K))
-        per_qr.append(recall_at_k(ranked, set(rel), K))
+        per_qr.append(recall_at_k(ranked, {d for d, s in rel.items() if s > 0}, K))
     client.close()
     return per_q, per_qr
 

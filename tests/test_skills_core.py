@@ -105,6 +105,38 @@ def test_list_skills_groups_by_skill_and_ignores_untagged(tmp_path):
         st.close()
 
 
+def test_skill_reads_tolerate_metadata_that_is_not_an_object(tmp_path):
+    """metadata is a JSON column, so a row can hold valid JSON that is not a
+    dict - a list, a string, a number. list_skills already skips those; the
+    _skill_rows read behind export/import called .get() on the parsed value
+    unguarded, so a LIKE-matching non-object row raised AttributeError and took
+    the whole export down instead of skipping one row."""
+    st = conftest.make_store(tmp_path)
+    try:
+        st.remember("a real one", metadata={"skill": "deploy"})
+        # valid JSON, not an object, and LIKE-matching the canonical
+        # '"skill": "deploy"' form so the prefilter selects it
+        st.conn.execute(
+            'INSERT INTO memories (content, kind, metadata, tenant_id, created_ms) '
+            "VALUES ('junk list', 'semantic', ?, 'default', 1)",
+            (json.dumps(["skill", "deploy"]),),
+        )
+        st.conn.execute(
+            'INSERT INTO memories (content, kind, metadata, tenant_id, created_ms) '
+            "VALUES ('junk string', 'semantic', ?, 'default', 1)",
+            ('"skill": "deploy"',),
+        )
+        st.conn.commit()
+
+        # the two reads that share this shape must not raise
+        assert list_skills(st) == [{"name": "deploy", "memories": 1}]
+        bundle = tmp_path / "deploy.zip"
+        result = export_skill(st, "deploy", bundle)
+        assert result["name"] == "deploy" and result["memories"] == 1
+    finally:
+        st.close()
+
+
 def test_import_rejects_bundle_missing_manifest(tmp_path):
     st = conftest.make_store(tmp_path)
     try:

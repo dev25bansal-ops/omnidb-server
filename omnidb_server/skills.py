@@ -8,14 +8,49 @@ import zipfile
 from pathlib import Path
 
 from .store import _SELECTIVE, E_CONSTRAINT, E_NOT_FOUND, E_TYPE, StoreError
+from .tenancy import DEFAULT_TENANT
 
 _SKILL_KINDS = ("procedural", "semantic")
 _MANIFEST = "manifest.json"
 _MEMORIES = "memories.jsonl"
 _MANIFEST_KEYS = {"name", "version", "description", "triggers"}
 
+# SEC-A3-06: admission budgets for an imported bundle, checked against the
+# ZipInfo headers BEFORE any read() so a deflate bomb is rejected without
+# ever being decompressed. Named like the other module caps (validation.py's
+# MAX_TRIGGER_PATTERNS, store.py's _RECONCILE_BATCH_CAP).
+MAX_BUNDLE_MEMBER_BYTES = 16 * 1024 * 1024
+MAX_BUNDLE_TOTAL_BYTES = 64 * 1024 * 1024
 
-def _skill_rows(store, skill_name: str) -> list:
+
+def _enforce_bundle_size_budget(zf: zipfile.ZipFile) -> None:
+    """Reject an over-large bundle from its declared sizes alone.
+
+    ZipInfo.file_size is the uncompressed size recorded in the header, so
+    this is a metadata check: a few-MB zip claiming gigabytes fails here and
+    never allocates. Per-member and aggregate budgets both apply, and the
+    sum covers every entry -- not just the two we read -- so padding the
+    archive with extra members cannot slip past the total.
+    """
+    total = 0
+    for info in zf.infolist():
+        size = info.file_size
+        if size > MAX_BUNDLE_MEMBER_BYTES:
+            raise StoreError(
+                f"{info.filename} declares {size} bytes, over the "
+                f"{MAX_BUNDLE_MEMBER_BYTES}-byte per-member bundle limit",
+                E_CONSTRAINT,
+            )
+        total += size
+        if total > MAX_BUNDLE_TOTAL_BYTES:
+            raise StoreError(
+                f"bundle declares {total}+ bytes uncompressed, over the "
+                f"{MAX_BUNDLE_TOTAL_BYTES}-byte total bundle limit",
+                E_CONSTRAINT,
+            )
+
+
+def _skill_rows(store, skill_name: str, tenant: str = DEFAULT_TENANT) -> list:
     """Live memory rows tagged metadata["skill"] == skill_name, ordered by id.
 
     The LIKE prefilter is a heuristic on the canonical json.dumps form
@@ -25,13 +60,21 @@ def _skill_rows(store, skill_name: str) -> list:
     """
     rows = store.conn.execute(
         f"SELECT id, kind, content, metadata, trigger_patterns FROM memories "
-        f"WHERE metadata LIKE ? AND {_SELECTIVE} ORDER BY id",
-        ('%"skill": "' + skill_name + '"%',),
+        f"WHERE metadata LIKE ? AND {_SELECTIVE} AND tenant_id = ? ORDER BY id",
+        ('%"skill": "' + skill_name + '"%', tenant),
     ).fetchall()
-    return [
-        row for row in rows
-        if json.loads(row["metadata"]).get("skill") == skill_name
-    ]
+    selected = []
+    for row in rows:
+        # metadata is a JSON column but the LIKE prefilter is a text heuristic,
+        # so a selected row can hold a non-object JSON value or text that is not
+        # one value at all. Skip those instead of failing the whole export.
+        try:
+            metadata = json.loads(row["metadata"])
+        except ValueError:
+            continue
+        if isinstance(metadata, dict) and metadata.get("skill") == skill_name:
+            selected.append(row)
+    return selected
 
 
 def _write_bundle(path: str | Path, manifest: dict, memory_lines: list[str]) -> None:
@@ -53,7 +96,8 @@ def _write_bundle(path: str | Path, manifest: dict, memory_lines: list[str]) -> 
         raise
 
 
-def export_skill(store, skill_name: str, path: str | Path) -> dict:
+def export_skill(store, skill_name: str, path: str | Path,
+                 tenant: str = DEFAULT_TENANT) -> dict:
     """Bundle the live memories tagged metadata["skill"] == skill_name into a zip.
 
     Bundle layout: manifest.json (name/version/description/triggers) plus
@@ -61,7 +105,7 @@ def export_skill(store, skill_name: str, path: str | Path) -> dict:
     the first matching procedural row that carries them; the bundle carries
     procedural/semantic rows only.
     """
-    rows = _skill_rows(store, skill_name)
+    rows = _skill_rows(store, skill_name, tenant=tenant)
     triggers = None
     memory_lines: list[str] = []
     for row in rows:
@@ -141,7 +185,8 @@ def _parse_memory_lines(text: str) -> list[dict]:
     return records
 
 
-def import_skill(store, path: str | Path, overwrite: bool = False) -> dict:
+def import_skill(store, path: str | Path, overwrite: bool = False,
+                 tenant: str = DEFAULT_TENANT) -> dict:
     """Import a skill bundle; every memory is re-tagged with manifest.name.
 
     Duplicate-safety: refuses when live memories tagged with that skill already
@@ -156,6 +201,9 @@ def import_skill(store, path: str | Path, overwrite: bool = False) -> dict:
             missing = {_MANIFEST, _MEMORIES} - set(zf.namelist())
             if missing:
                 raise StoreError(f"bundle is missing {sorted(missing)}", E_TYPE)
+            # SEC-A3-06: size gate BEFORE the first read(); namelist() proves
+            # presence, not size, so a bomb still reached zf.read() unbounded.
+            _enforce_bundle_size_budget(zf)
             try:
                 manifest = json.loads(zf.read(_MANIFEST).decode("utf-8"))
             except ValueError as exc:
@@ -169,26 +217,28 @@ def import_skill(store, path: str | Path, overwrite: bool = False) -> dict:
 
     name = manifest["name"]
     triggers = manifest.get("triggers") or []
-    existing = _skill_rows(store, name)
+    existing = _skill_rows(store, name, tenant=tenant)
     if existing and not overwrite:
         raise StoreError(f"skill '{name}' already imported", E_CONSTRAINT)
     if existing:
-        store.forget_many([int(row["id"]) for row in existing])
+        store.forget_many([int(row["id"]) for row in existing], tenant=tenant)
     for record in memories:
         store.remember(
             record["content"],
             kind=record["kind"],
             metadata={**record["metadata"], "skill": name},
             trigger_patterns=triggers if record["kind"] == "procedural" and triggers else None,
+            tenant=tenant,
         )
     return {"name": name, "memories": len(memories), "triggers": len(triggers)}
 
 
-def list_skills(store) -> list[dict]:
+def list_skills(store, tenant: str = DEFAULT_TENANT) -> list[dict]:
     """Group live memories by metadata["skill"]; counts sorted descending."""
     counts: dict[str, int] = {}
     for row in store.conn.execute(
-        f"SELECT metadata FROM memories WHERE {_SELECTIVE}"
+        f"SELECT metadata FROM memories WHERE {_SELECTIVE} AND tenant_id = ?",
+        (tenant,),
     ):
         try:
             metadata = json.loads(row["metadata"])

@@ -163,7 +163,7 @@ Authorisation is enforced twice, deliberately:
 | A3 | Hostile tenant | graph join to victim, then read | **fully open** | G5 |
 | A4 | Hostile tenant | omit `agent_id` → all | **fully open** | G1/G2 |
 | A5 | Hostile tenant | store prompt-injection payload, let another tenant retrieve it into their LLM | **unmitigated, not covered by MCP spec** | treat returned content as untrusted; tenant-isolated writes |
-| A6 | Any tenant | `consolidate` leaks all tenants into one prompt | **fully open** | G6 |
+| A6 | Any tenant | `consolidate` leaks all tenants into one prompt | **closed 2026-09-30** (tenant fenced on all four row accesses; `tests/test_consolidation_tenant.py`) | G6 |
 | A7 | Confused-deputy via proxy | client-supplied identity + static upstream creds | applies the moment a gateway exists | T2/T3, per-client consent |
 | A8 | Insider / owner role | `BYPASSRLS`, table owner | n/a | FORCE RLS, non-privileged app role |
 | A9 | Cross-tenant timing | shared global ANN index, shared cache | **inherent** | G7 plus per-tenant index or partition |
@@ -179,7 +179,7 @@ A10 is a denial-of-service against the shared process, which per-tenant isolatio
 ## 7. Breaking changes implied
 
 1. `search(sql)` removed, or replaced by a tenant-scoped view with no general SQL.
-2. `consolidate` becomes a per-tenant background job; one transcript never contains two
+2. DONE 2026-09-30: `consolidate` is tenant-scoped, so one transcript never contains two
    tenants. Also fixes `consolidate.py:230-236`, which currently reports success when
    only one chunk of ten succeeded.
 3. `recall` rejects a missing agent scope rather than defaulting to all.

@@ -61,7 +61,9 @@ def _index_check(target: Path) -> dict:
 def _recovery_check(target: Path) -> dict:
     """AUDIT follow-up: surface pending recovery work (the markers behind
     AUDIT-I01/I03/I16) so operators can see what the next open will heal.
-    Read-only peek; pending work is informational, never a doctor failure."""
+    Read-only peek. Pending work is informational, never a failure; a marker
+    that cannot be read or is the wrong shape IS a failure, because silently
+    reporting a wrong count is worse than reporting none."""
     db_path = target / "omnidb.db"
     if not db_path.is_file():
         return {"ok": True, "detail": "no database yet"}
@@ -76,11 +78,34 @@ def _recovery_check(target: Path) -> dict:
     pending: list[str] = []
     if rows.get("index_dirty") == "1":
         pending.append("index_dirty (sidecar lagging rows)")
+    pending_reembed = rows.get("pending_reembed", "[]")
     try:
         import json as _json
-        n_pending = len(_json.loads(rows.get("pending_reembed", "[]")))
-    except ValueError:
-        n_pending = -1
+        # Check the SHAPE of the parsed value, not the length of it. The
+        # original code did `len(_json.loads(...))`, so `len()` always returned
+        # a non-negative int and the guard below it was unreachable: a JSON
+        # *object* marker was counted as one content revision and reported
+        # ok:True. The shape must be tested on the decoded value, before len().
+        decoded = _json.loads(pending_reembed)
+        if not isinstance(decoded, list):
+            return {
+                "ok": False,
+                "detail": "pending_reembed marker is not a JSON list; repair or "
+                          "clear it before relying on recovery",
+            }
+        if not all(isinstance(item, (int, str)) for item in decoded):
+            return {
+                "ok": False,
+                "detail": "pending_reembed marker holds non-id entries; repair "
+                          "or clear it before relying on recovery",
+            }
+        n_pending = len(decoded)
+    except (TypeError, ValueError):
+        return {
+            "ok": False,
+            "detail": "pending_reembed marker is unreadable; repair or clear it "
+                      "before relying on recovery",
+        }
     if n_pending > 0:
         pending.append(f"pending_reembed ({n_pending} content revisions)")
     if rows.get("reembed_pending") is not None:

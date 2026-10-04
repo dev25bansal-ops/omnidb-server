@@ -1,3 +1,27 @@
+> **PROVENANCE WARNING (2026-09-30, REVISED after recompute)** - the six **scidocs**
+> stage_recall_at_w values in this file are WRONG. The fiqa, scifact and nfcorpus
+> values in this file are CORRECT and unchanged.
+>
+> The bug: stage_recall_at_w was len(top_k & set(rel)) / len(set(rel)), where rel is
+> the BEIR qrels {doc_id: score} dict. set(rel) keeps every key, including documents
+> judged with score 0, which are judged NOT relevant. That inflated the denominator.
+>
+> It only matters where score-0 judgements exist. Census: nfcorpus 0 of 12334,
+> scifact 0 of 339, fiqa 0 of 1706, scidocs **25000 of 29928 (83.5%)**. The fix is
+> therefore a no-op on three corpora and changes scidocs only.
+>
+> Corrected scidocs values (published -> true): bm25 w=25 0.0367 -> 0.2205,
+> bm25 w=100 0.0593 -> 0.3418, minilm w=25 0.0562 -> 0.3374,
+> minilm w=100 0.0870 -> 0.5089, bge-base w=25 0.0537 -> 0.3228,
+> bge-base w=100 0.0842 -> 0.4957. All six move UP; the old values understated recall.
+>
+> Consequence for the prose below: the scidocs bm25 stage is NOT the recall-poorest
+> first stage. Corrected, nfcorpus at 0.2376 is the lowest, which is what the
+> weakness rule already assumed. The scidocs rows of that argument need revisiting.
+>
+> The nDCG, delta and p columns throughout this file are NOT affected - nDCG reads
+> the graded scores directly and was always correct. Full working, including the
+> corrected Spearman check: .omni-audit/F15-RECOMPUTE.md
 # Probe: reranker sign vs retrieval window (fiqa, BAAI/bge-reranker-base)
 
 - eval k = 10; reranker device: GPU when available

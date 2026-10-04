@@ -1,16 +1,84 @@
 from __future__ import annotations
 
+import ipaddress
 import math
 import os
 import tomllib
 from dataclasses import MISSING, dataclass, fields
 from pathlib import Path
+from urllib.parse import urlsplit
 
 _TOML_NAME = "omnidb.toml"
+_EMBEDDER_SELECTORS = ("auto", "hashing", "fastembed")
+_VECTOR_INDEX_SELECTORS = ("auto", "hnsw", "brute")
+
+
+def validate_selector(name: str, value: object, accepted: tuple[str, ...]) -> str:
+    from .store import E_TYPE, StoreError
+
+    if not isinstance(value, str) or value not in accepted:
+        raise StoreError(
+            f"config value {name} must be one of {', '.join(accepted)} (got {value!r})",
+            E_TYPE,
+        )
+    return value
 
 
 class ConfigError(RuntimeError):
     pass
+
+
+# SEC-A3-05: the LLM base URL is the only outbound data path in the product
+# (consolidate.py sends the Authorization header plus the whole episode
+# transcript to it), so its scheme is a security control, not a preference.
+# https is required everywhere except loopback, which is what keeps a LAN or
+# local Ollama working. A literal loopback *host* is the exemption, so a
+# hostname that merely starts with "127.0.0.1" or "localhost" (an SSRF-shaped
+# bypass such as 127.0.0.1.evil.com) is still rejected.
+_LOOPBACK_HOSTNAMES = frozenset({"localhost"})
+
+
+def _is_loopback_host(hostname: str | None) -> bool:
+    """True when hostname is a loopback literal, not a name that looks like one."""
+    if not hostname:
+        return False
+    if hostname.lower() in _LOOPBACK_HOSTNAMES:
+        return True
+    try:
+        return ipaddress.ip_address(hostname).is_loopback
+    except ValueError:
+        return False
+
+
+def _validate_llm_base_url(value: object) -> str | None:
+    """Return the URL unchanged, or raise ConfigError naming the reason.
+
+    Loopback (127.0.0.1 / ::1 / localhost, including other addresses in the
+    127.0.0.0/8 and ::1 ranges) may be plaintext http; every other host must
+    be https. A URL with no scheme, or with any other scheme (file://, ftp://),
+    is rejected -- a bare "host/v1" would otherwise be sent to whatever
+    httpx defaults to.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.strip():
+        raise ConfigError(f"config value llm_base_url must be a non-empty string (got {value!r})")
+    try:
+        parts = urlsplit(value.strip())
+        host = parts.hostname
+    except ValueError as exc:  # malformed IPv6 literal, bad port, ...
+        raise ConfigError(f"config value llm_base_url is not a valid URL: {exc} (got {value!r})") from exc
+    scheme = (parts.scheme or "").lower()
+    if scheme == "https":
+        return value
+    if scheme == "http" and _is_loopback_host(host):
+        return value
+    hint = "https" + (" (loopback such as http://127.0.0.1:11434/v1 is allowed)" if scheme else "")
+    raise ConfigError(
+        f"config value llm_base_url must use https, or http for a loopback host "
+        f"(got {value!r}); refusing to send the LLM credential and transcript in "
+        f"cleartext. Use {hint}"
+    )
 
 
 def _env(name: str) -> str | None:
@@ -21,6 +89,17 @@ def _env(name: str) -> str | None:
 def _coerce(raw, template, name="value"):
     """AUDIT-I15: accept explicit scalar forms without lossy conversion."""
     try:
+        # SEC-01: a field declared `dict | None` (or any other non-scalar type)
+        # has default None, so `template is None` was true for it and every
+        # value was str()-ed - which turned the documented inline `tenants =
+        # {...}` map into a string and made `serve-http` refuse to start on
+        # the very config `tenant-key` tells the operator to write. Pass
+        # structured values through untouched; there is no scalar coercion to
+        # apply to them, and the consuming code validates their shape.
+        if isinstance(raw, (dict, list)):
+            if template is not None and not isinstance(template, (dict, list)):
+                raise ValueError(f"expected a scalar, got a {type(raw).__name__}")
+            return raw
         if template is None or isinstance(template, str):
             return raw if isinstance(raw, str) else str(raw)
         if isinstance(template, bool):
@@ -58,8 +137,8 @@ def _read_toml(path: Path) -> dict:
 @dataclass
 class Config:
     home: Path
-    embedder: str = "auto"  # auto | hashing | fastembed
-    vector_index: str = "auto"  # auto | hnsw | brute
+    embedder: str = _EMBEDDER_SELECTORS[0]  # auto | hashing | fastembed
+    vector_index: str = _VECTOR_INDEX_SELECTORS[0]  # auto | hnsw | brute
     half_life_hours: float = 168.0
     recency_weight: float = 0.15
     freq_weight: float = 0.05
@@ -84,9 +163,24 @@ class Config:
     persist_min_ops: int = 8
     persist_max_s: float = 5.0
     dead_compact_ratio: float = 0.2
-    # hnsw ef_search (PERF-07): the benchmark gate shows ef=128 materially
-    # better at 10k rows; the value is honored down to a floor of 16.
-    ef_search: int = 64
+    # hnsw ef_search (PERF-07, PERF-A2-02). This comment used to cite the
+    # project's own sweep and then ship 64 -- the code was its own
+    # counter-evidence. Measured on bench/results.md (clustered synthetic
+    # cosine, hnswlib M=16/efC=200, recall@10 vs exact ground truth), 64 -> 128
+    # buys +0.193 recall@10 at 10k/384-d for +0.027 ms p50, and +0.117 at
+    # 100k/768-d for +0.208 ms p50 (0.278 -> 0.395, a 42% relative gain).
+    # Every cell in the sweep improves and none regresses, so the default is
+    # now the value the benchmark supports. The cost is bounded and measured:
+    # worst-case p50 is 0.770 ms (768-d/100k), i.e. the densest, most
+    # expensive cell in the sweep still answers in under a millisecond.
+    # The value is honored down to a floor of 16 (vector_index.py HnswlibIndex
+    # clamps with max(ef_search, 16)).
+    # Coupling: this default and the per-cell frontier gate in
+    # bench/baseline.py must ship together. The gate floors are set from the
+    # measured 768-d/100k frontier, not from a wish -- see that file's
+    # _recall_floor() for the derivation, and PERF-A2-10 for why a max(...)-
+    # based gate cannot fail.
+    ef_search: int = 128
     # PERF-08: when recall is scoped by agent_id, the dense leg over-fetches
     # the global ANN by this factor before the agent filter drops foreign
     # rows; raise it when many agents share one home.
@@ -102,6 +196,12 @@ class Config:
     llm_base_url: str | None = None
     llm_model: str | None = None
     llm_api_key: str | None = None
+    # ADR-08: inline map of api-key -> tenant-id for `serve-http`. Empty means
+    # single-tenant stdio; `serve-http` refuses to start with an empty map.
+    # Keys stored here are the PLAINTEXT keys in omnidb.toml; prefer a
+    # <home>/tenants.json written by a secret manager, and treat inline keys as
+    # a dev convenience, not a production secret store.
+    tenants: dict | None = None
     # SEC-01: facts the LLM reports below this confidence are dropped instead
     # of written into long-term memory; 0.0 keeps every validated fact.
     consolidation_min_confidence: float = 0.0
@@ -206,6 +306,11 @@ def _validate_config(cfg: "Config") -> None:
                 finite = False
             if not finite:
                 raise ConfigError(f"config value {field.name} must be finite (got {value!r})")
+    for name, accepted in (
+        ("embedder", _EMBEDDER_SELECTORS),
+        ("vector_index", _VECTOR_INDEX_SELECTORS),
+    ):
+        validate_selector(name, getattr(cfg, name), accepted)
     checks: list[tuple[str, bool, str]] = [
         ("k_fetch", cfg.k_fetch >= 1, "must be >= 1"),
         ("rrf_k", cfg.rrf_k >= 1, "must be >= 1"),
@@ -230,3 +335,5 @@ def _validate_config(cfg: "Config") -> None:
     if bad:
         name, rule = bad[0]
         raise ConfigError(f"config value {name} {rule} (got {getattr(cfg, name)!r})")
+    # SEC-A3-05: last, so a typo in a numeric field is still reported first.
+    _validate_llm_base_url(cfg.llm_base_url)
