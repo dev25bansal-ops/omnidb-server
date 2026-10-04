@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Iterator
 from .config import Config
 from .db import SCHEMA_VERSION, get_meta, set_meta
 from .embeddings import Embedder
+from .tenancy import validate_tenant_id
 from .validation import validate_content, validate_trigger_patterns
 
 if TYPE_CHECKING:
@@ -109,9 +110,20 @@ def _serialized(method):
     read-back assumes no interleaved inserts. Serializing at the store boundary
     makes every tool atomic with respect to the others; the reentrancy lets
     delegating methods (remember -> remember_many, flush -> checkpoint) nest.
+
+    This is also where a `tenant` keyword argument is validated (audit C3).
+    `_serialized` is the single choke point every public store method passes
+    through, so validating here means the guarantee cannot be forgotten by the
+    next method someone adds — whereas validating inside `remember_many` alone
+    would leave `forget`, `get` and the rest trusting their callers. Nested calls
+    re-validate, which is cheap and harmless: `validate_tenant_id` is a length
+    check and a set difference.
     """
     @functools.wraps(method)
     def wrapper(self, *args, **kwargs):
+        tenant = kwargs.get("tenant")
+        if tenant is not None:
+            validate_tenant_id(tenant)
         with self._op_lock:
             return method(self, *args, **kwargs)
     return wrapper
@@ -507,10 +519,15 @@ class MemoryStore:
             created_mses.append(int(item.get("created_ms") or now_ms))
             access_counts.append(int(item.get("access_count") or 0))
             explicit_ids.append(item.get("_explicit_id"))
-            # ADR-08: tenant is a validated id from the auth layer; the default
-            # keeps single-tenant deployments and every pre-tenant caller
-            # working unchanged.
-            tenants.append(str(item.get("tenant") or "default"))
+            # ADR-08: the tenant is validated below, at the store boundary. The
+            # auth layer validates too, but the store is what every other caller
+            # (CLI --tenant, skills, the public Python API) reaches first, so it
+            # validates rather than assuming (audit C3). The default keeps
+            # single-tenant deployments and every pre-tenant caller working
+            # unchanged.
+            tenant = str(item.get("tenant") or "default")
+            validate_tenant_id(tenant)
+            tenants.append(tenant)
             prepared_links.append(self._validate_links(
                 item.get("links") or [], tenant=tenants[-1]))
 

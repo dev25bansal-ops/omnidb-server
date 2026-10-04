@@ -406,10 +406,17 @@ _TOML_TEMPLATE = """\
 
 def _tenant_of(args) -> str:
     """The tenant a skill command runs against; None means this deployment's
-    single tenant, which is what a local operator without credentials gets."""
-    from .tenancy import DEFAULT_TENANT
+    single tenant, which is what a local operator without credentials gets.
 
-    return args.tenant or DEFAULT_TENANT
+    `--tenant` is validated here rather than passed through (audit C3): it is
+    argv, so it is exactly as untrusted as the store's own callers are, and the
+    store now validates too. This check exists so the operator gets the
+    actionable message ("tenant id has characters outside ...") at the command
+    line instead of a stack trace from deeper in the write path.
+    """
+    from .tenancy import DEFAULT_TENANT, validate_tenant_id
+
+    return validate_tenant_id(args.tenant) if args.tenant else DEFAULT_TENANT
 
 
 def _cmd_skill(store, args) -> int:
