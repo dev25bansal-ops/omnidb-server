@@ -50,6 +50,39 @@ def _enforce_bundle_size_budget(zf: zipfile.ZipFile) -> None:
             )
 
 
+def _read_member(zf: zipfile.ZipFile, name: str) -> bytes:
+    """Read one member, refusing to buffer more than the budget allows.
+
+    `_enforce_bundle_size_budget` reads `ZipInfo.file_size`, which is header
+    metadata an attacker controls: a 306 KB zip declaring `file_size: 10` passes
+    that check, and `zf.read()` then decompresses the real payload before the
+    CRC check rejects it — measured at 631 MB peak for a 300 MB member. The CRC
+    fires *after* the allocation, so it is not a defence.
+
+    Streaming with a hard cap refuses the bundle while it is still arriving, so
+    a forged header buys no memory. The cap is the per-member budget, which is
+    the same limit the header check enforces — this does not lower it, it makes
+    it real. Returns bytes so callers keep using `zf.read()`'s return shape.
+    """
+    limit = MAX_BUNDLE_MEMBER_BYTES
+    with zf.open(name) as member:
+        chunks: list[bytes] = []
+        total = 0
+        while True:
+            chunk = member.read(64 * 1024)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > limit:
+                raise StoreError(
+                    f"{name} expands past the {limit}-byte per-member bundle "
+                    "limit; its declared size in the zip header is not trusted",
+                    E_CONSTRAINT,
+                )
+            chunks.append(chunk)
+    return b"".join(chunks)
+
+
 def _skill_rows(store, skill_name: str, tenant: str = DEFAULT_TENANT) -> list:
     """Live memory rows tagged metadata["skill"] == skill_name, ordered by id.
 
@@ -205,11 +238,11 @@ def import_skill(store, path: str | Path, overwrite: bool = False,
             # presence, not size, so a bomb still reached zf.read() unbounded.
             _enforce_bundle_size_budget(zf)
             try:
-                manifest = json.loads(zf.read(_MANIFEST).decode("utf-8"))
+                manifest = json.loads(_read_member(zf, _MANIFEST).decode("utf-8"))
             except ValueError as exc:
                 raise StoreError(f"{_MANIFEST} is not valid JSON ({exc})", E_TYPE) from exc
             _validate_manifest(manifest)
-            memories = _parse_memory_lines(zf.read(_MEMORIES).decode("utf-8"))
+            memories = _parse_memory_lines(_read_member(zf, _MEMORIES).decode("utf-8"))
     except zipfile.BadZipFile as exc:
         raise StoreError(f"not a valid skill bundle zip: {exc}", E_TYPE) from exc
     except OSError as exc:
