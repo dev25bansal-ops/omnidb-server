@@ -110,7 +110,12 @@ def run_recall(store, query: str, k: int, kind, k_fetch,
     agent_params: list = [agent_id, agent_id]
     match_expr = fts_match_query(query)
     sparse_ids: list[int] = []
-    if match_expr:
+    # `_fts_table_existing`, not `_fts_table`: a read must not run DDL. On a
+    # home with no rows for this tenant there is no FTS table, and there is
+    # nothing for the sparse leg to contribute anyway — so the leg is skipped
+    # rather than materialising an empty index to query.
+    fts = store._fts_table_existing(tenant)
+    if match_expr and fts:
         # ADR-08 / W3-3: the lexical leg queries the *tenant's own* FTS table,
         # so bm25 derives IDF from that tenant's corpus alone. On the shared
         # table every tenant's document frequencies reweighted every other
@@ -122,7 +127,6 @@ def run_recall(store, query: str, k: int, kind, k_fetch,
         # a per-tenant table, and that is the point: it also excludes
         # soft-deleted and superseded rows via `_SELECTIVE`, which table
         # separation does not do.
-        fts = store._fts_table(tenant)
         rows = store.conn.execute(
             f"SELECT f.rowid FROM {fts} f "
             "JOIN memories m ON m.id = f.rowid "

@@ -52,6 +52,9 @@ _CLAUSE_HELPERS = frozenset({
     # returns that same quoted identifier. Same guarantee, and it is the form
     # every write and read site actually uses.
     "_fts_table",
+    # Its read-only counterpart: returns the same quoted identifier or None, and
+    # never creates anything. Recall uses it so a read cannot run DDL.
+    "_fts_table_existing",
 })
 
 

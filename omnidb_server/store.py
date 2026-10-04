@@ -1528,6 +1528,27 @@ class MemoryStore:
             )
         return table
 
+    def _fts_table_existing(self, tenant: str) -> str | None:
+        """The tenant's FTS table name if registered, else None. Never writes.
+
+        The read counterpart to `_fts_table`. A read that resolves a table must
+        not create one: `recall` on an empty home would otherwise run DDL, turn
+        a read into a write, and dirty a home that a read-only diagnostic opened
+        purely to inspect.
+
+        Returns None when the tenant has no table, and the caller skips the
+        lexical leg rather than querying a table that does not exist — which is
+        also the right retrieval behaviour: with no postings there is nothing
+        for the sparse leg to contribute.
+        """
+        from .tenant_schema import fts_table_name
+
+        if self.conn.execute(
+            "SELECT 1 FROM meta WHERE key = ?", (f"tenant_fts:{tenant}",)
+        ).fetchone() is None:
+            return None
+        return fts_table_name(tenant)
+
     @_serialized
     def close(self) -> None:
         try:

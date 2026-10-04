@@ -447,3 +447,48 @@ def test_the_postcondition_refuses_to_publish_a_short_table(tmp_path, monkeypatc
     from omnidb_server.db import DbError, connect
     with pytest.raises(DbError, match="expected 2"):
         connect(tmp_path)
+
+
+def test_a_home_with_no_rows_migrates_and_opens(tmp_path):
+    """An empty home must reach v6, not stall on the missing first tenant.
+
+    `_populate_per_tenant_fts` iterates the tenants present in `memories`, so a
+    home with no rows creates no FTS table at all. That is correct — there is
+    nothing to index — but it means the very first write is what brings a table
+    into existence, and `schema()` / `recall` before that write must still work
+    rather than raise on a missing table.
+    """
+    from omnidb_server.db import SCHEMA_VERSION
+
+    st = make_store(tmp_path)
+    try:
+        assert st.conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+        assert _fts_tables(st.conn) == set(), "an empty home should have no FTS table"
+        # reads must not raise on the absent table
+        assert st.recall("anything", k=5) == []
+        assert st.schema()["schema_version"] == SCHEMA_VERSION
+        assert st.check()["fts_integrity"] == "ok"
+        # and the first write brings its tenant's table into being
+        st.remember("first note", tenant="default")
+        st.flush()
+        assert _fts_tables(st.conn) == {"fts_default"}
+    finally:
+        st.close()
+
+
+def test_recall_on_an_empty_home_does_not_create_a_table(tmp_path):
+    """A read must not be a write.
+
+    `_fts_table` creates the table on demand, so a read path that resolves it
+    would turn a `recall` on an empty home into a DDL write — surprising, and it
+    would make a read-only diagnostic open dirty a home it was only inspecting.
+    """
+
+    st = make_store(tmp_path)
+    try:
+        st.recall("nothing here", k=5)
+        assert _fts_tables(st.conn) == set(), (
+            "recall created an FTS table; a read must not write"
+        )
+    finally:
+        st.close()
