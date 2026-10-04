@@ -10,6 +10,8 @@ from pathlib import Path
 
 import numpy as np
 
+from .tenancy import validate_tenant_id
+
 
 class VectorIndexError(RuntimeError):
     pass
@@ -389,7 +391,16 @@ class MultiTenantIndexRouter:
             return "multi"
 
     def _get_backend_for_tenant(self, tenant: str) -> "HnswlibIndex | BruteForceIndex":
-        """Get or lazily construct a tenant's backend index."""
+        """Get or lazily construct a tenant's backend index.
+
+        The tenant id reaches a filesystem path here, so it is validated before
+        the join — audit finding C4. `home/tenants/<tenant>` plus an unvalidated
+        id meant `get_or_create("../../escaped")` created a directory *beside*
+        the home. `tenancy.index_name` and `tenant_schema` both validate first;
+        the router is the third place a tenant id becomes a filename and it was
+        the one that did not.
+        """
+        validate_tenant_id(tenant)
         with self._lock:
             if tenant in self._backends:
                 return self._backends[tenant]
@@ -398,6 +409,7 @@ class MultiTenantIndexRouter:
             idx_path_home.mkdir(parents=True, exist_ok=True)
             hnsw_path = idx_path_home / "index.hnsw"
             brute_path = idx_path_home / "vectors.npz"
+            fresh: "HnswlibIndex | BruteForceIndex"
             if backend_kind == "hnsw":
                 try:
                     fresh = HnswlibIndex(hnsw_path, self._dim, count_hint=64 * 2, ef_search=self._ef_search)

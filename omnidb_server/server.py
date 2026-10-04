@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import functools
+import sys
 from contextlib import contextmanager
 from pathlib import Path
-import sys
 
 # Tools run on anyio worker threads: sync store operations would otherwise
 # execute on the event loop and block pings/other requests for their full
@@ -223,8 +223,7 @@ def open_read_only_store(cfg=None):
     from .config import Config
     from .db import get_meta
     from .embeddings import make_embedder
-    from .vector_index import (BruteForceIndex, VectorIndexError,
-                            open_vector_index)
+    from .vector_index import BruteForceIndex, VectorIndexError, open_vector_index
 
     cfg = cfg or Config.load()
     db_path = cfg.home / "omnidb.db"

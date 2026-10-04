@@ -24,8 +24,8 @@ import json
 import sqlite3
 
 import pytest
-
 from conftest import make_store
+
 from omnidb_server.portability import (
     _aliased_where,
     _build_memory_where,

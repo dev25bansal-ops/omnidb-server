@@ -11,7 +11,12 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from omnidb_server.vector_index import BruteForceIndex, MultiTenantIndexRouter, make_multi_tenant_router
+from omnidb_server.tenancy import TenantError
+from omnidb_server.vector_index import (
+    MultiTenantIndexError,
+    MultiTenantIndexRouter,
+    make_multi_tenant_router,
+)
 
 
 class TestMultiTenantIndexRouterBasics:
@@ -167,8 +172,79 @@ class TestMultiTenantIndexError:
     """MultiTenantIndexError usage and propagation."""
 
     def test_error_raised_on_failed_init(self):
+        """A corrupt sidecar surfaces as MultiTenantIndexError, not a raw one.
+
+        The router wraps backend construction, so a BruteForceIndex.load that
+        raises something unexpected must still reach the caller as the router's
+        own error type — otherwise a bad sidecar on one tenant escapes as a
+        KeyError from numpy and the operator sees a stack trace instead of the
+        tenant it belongs to.
+        """
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            home = Path(tmp_dir)
+            (home / "tenants" / "f1").mkdir(parents=True)
+            # A file where the sidecar's parent expects a readable index: an
+            # .npz that is not a zip at all.
+            (home / "tenants" / "f1" / "vectors.npz").write_bytes(b"not a zip")
+
+            router = MultiTenantIndexRouter(home, dim=512, kind="brute")
+            with pytest.raises(MultiTenantIndexError):
+                router.get_or_create("f1")
+
+class TestTenantIdValidation:
+    """A tenant id reaches a filesystem path, so it must be validated first.
+
+    Audit finding C4: `_get_backend_for_tenant` joined the tenant straight into
+    `home/tenants/<tenant>` and called `mkdir(parents=True)` with no validation.
+    `get_or_create("../../escaped")` therefore created a directory *beside* the
+    home. The codebase's own rule — "a tenant id reaches a filename and must not
+    traverse" (tenancy.validate_tenant_id, applied by index_name and
+    tenant_schema) — was simply absent here.
+
+    The router has no production caller yet, so this is latent rather than
+    live: it is the intended integration point, and shipping it unvalidated
+    means the next person to wire it in inherits a path traversal.
+    """
+
+    @pytest.mark.parametrize("tenant", [
+        "../../escaped",
+        "..",
+        "a/b",
+        r"..\win",
+        "",
+        ".",
+    ])
+    def test_traversing_tenant_id_is_rejected(self, tenant):
         with tempfile.TemporaryDirectory() as tmp_dir:
             home = Path(tmp_dir)
             router = MultiTenantIndexRouter(home, dim=512, kind="brute")
-            # Simulate impossible condition by setting corrupt dir permissions would be OS-specific;
-            # instead, just verify exception type exists
+            with pytest.raises(TenantError):
+                router.get_or_create(tenant)
+
+    def test_a_rejected_tenant_creates_nothing_outside_the_home(self):
+        """The refusal must happen before mkdir, not after.
+
+        The home is nested one level down so the escape target is a path this
+        test owns; scanning the shared temp directory would trip over unrelated
+        leftovers from other runs.
+        """
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            sandbox = Path(tmp_dir)
+            home = sandbox / "home"
+            home.mkdir()
+            router = MultiTenantIndexRouter(home, dim=512, kind="brute")
+            with pytest.raises(TenantError):
+                router.get_or_create("../../escaped")
+            assert sorted(p.name for p in sandbox.iterdir()) == ["home"], \
+                "a rejected tenant id created a directory outside the home"
+            assert list(home.iterdir()) == [], \
+                "a rejected tenant id created a directory inside the home"
+
+    def test_a_legal_tenant_id_still_works(self):
+        """Validation must not break the ordinary case."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            home = Path(tmp_dir)
+            router = MultiTenantIndexRouter(home, dim=512, kind="brute")
+            backend = router.get_or_create("acme-corp_1")
+            assert backend is not None
+            assert (home / "tenants" / "acme-corp_1").is_dir()

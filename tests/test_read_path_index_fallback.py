@@ -10,12 +10,11 @@ fallback says why on stderr - which is what ARCH-04 already did one layer down.
 """
 from __future__ import annotations
 
-import pytest
-
-from conftest import make_store
-
 import sys
 import types
+
+import pytest
+from conftest import make_store
 
 import omnidb_server.server as srv
 from omnidb_server.vector_index import (
@@ -23,7 +22,6 @@ from omnidb_server.vector_index import (
     HnswlibIndex,
     VectorIndexError,
 )
-import pytest
 
 
 def _read_cfg(home):

@@ -15,7 +15,6 @@ from __future__ import annotations
 import inspect
 
 import pytest
-
 from conftest import make_store
 
 from omnidb_server.server import attach_tools

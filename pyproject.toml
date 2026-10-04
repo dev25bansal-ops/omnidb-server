@@ -70,9 +70,11 @@ select = ["E4", "E7", "E9", "F", "I"]
 
 # bench scripts insert the repo root on sys.path before importing sibling
 # modules (research_bench_v3, probe_rerank_window), so imports legitimately
-# sit below module-level code.
+# sit below module-level code. test_latency_run_visibility.py does the same
+# for bench/research_bench_v3.py.
 [tool.ruff.lint.per-file-ignores]
 "bench/*.py" = ["E402"]
+"tests/test_latency_run_visibility.py" = ["E402"]
 
 [tool.mypy]
 # python_version is intentionally unpinned: the interpreter-default target

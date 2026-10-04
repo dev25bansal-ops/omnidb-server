@@ -20,8 +20,8 @@ what comes back, not which branch of the source was taken.
 from __future__ import annotations
 
 import pytest
-
 from conftest import make_store
+
 from omnidb_server.store import StoreError
 from omnidb_server.tenancy import (
     DEFAULT_TENANT,

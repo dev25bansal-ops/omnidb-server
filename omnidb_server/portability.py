@@ -12,8 +12,8 @@ from pathlib import Path
 
 from .db import get_meta, set_meta
 from .store import E_CONSTRAINT, E_NOT_FOUND, E_TYPE, StoreError, _commit_or_rollback
-from .validation import validate_content, validate_trigger_patterns
 from .tenancy import DEFAULT_TENANT
+from .validation import validate_content, validate_trigger_patterns
 
 _KINDS = ("episodic", "semantic", "procedural")
 

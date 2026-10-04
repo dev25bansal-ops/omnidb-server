@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from conftest import make_store
+
 from omnidb_server.cli import main
 
 
