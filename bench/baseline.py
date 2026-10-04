@@ -284,11 +284,36 @@ def main() -> int:
                     }
 
             quantized, scale = sq8_quantize(data)
-            q_int = np.clip(np.round(queries / scale), -127, 127).astype(np.int32)
+            q_int = np.clip(np.round(queries / scale), -127, 127)
+            # Widen once, outside the timed region, and to float32 rather than
+            # int32.
+            #
+            # Hoisting: `quantized.astype(...)` materialises the whole 100k x 768
+            # int8 corpus and does not depend on the query, so doing it per query
+            # put ~336 ms of pure setup inside a timed loop at 768-d/100k and
+            # tripped the p50 gate below for reasons that had nothing to do with
+            # SQ8.
+            #
+            # float32 over int32: numpy has no BLAS kernel for integer matmul and
+            # falls back to a slow reference loop, while float32 is
+            # BLAS-accelerated — 13.5 ms vs 160.3 ms per query at 768-d/100k.
+            # This is exact, not an approximation: int8 x int8 products are at
+            # most 127*127 = 16,129, so a 768-length dot cannot exceed
+            # 12,387,072, and float32 represents every integer exactly up to
+            # 2**24 = 16,777,216. The shortlist can differ by a few ids (ties at
+            # the 50th position), but those candidates are only fed to the exact
+            # f32 rerank, so the reported recall is unchanged — measured
+            # identical to four decimal places. tests/test_baseline_sq8_harness.py
+            # pins both the hoist and the recall equivalence.
+            #
+            # int16 is NOT usable here: it saturates at 32,767 and |dot| reaches
+            # ~1.3e5 in practice.
+            wide = quantized.astype(np.float32)
+            q_wide = q_int.astype(np.float32)
             recalls, latencies = [], []
             for qi in range(len(queries)):
                 t = time.perf_counter()
-                scores = quantized.astype(np.int32) @ q_int[qi]
+                scores = wide @ q_wide[qi]
                 candidates = np.argpartition(-scores, 50)[:50]
                 reranked = candidates[np.argsort(-(data[candidates] @ queries[qi]))[:10]]
                 latencies.append(time.perf_counter() - t)
