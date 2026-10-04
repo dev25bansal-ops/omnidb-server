@@ -13,6 +13,11 @@ import anyio
 from .store import E_CONSTRAINT, E_NOT_FOUND, MemoryStore, StoreError
 from .tenancy import DEFAULT_TENANT
 
+# How often the background thread checkpoints the WAL and enforces the idle
+# persistence deadline. A parameter rather than a literal so the loop's error
+# handling can be driven at a test-friendly rate instead of one tick a second.
+_MAINTENANCE_INTERVAL_S = 1.0
+
 
 async def _call(fn, /, *args, **kwargs):
     return await anyio.to_thread.run_sync(functools.partial(fn, *args, **kwargs))
@@ -358,10 +363,37 @@ def serve(home=None) -> int:
     # persist_max_s even after the final client operation.
     _stop_event = _threading.Event()
 
-    def _maintenance_loop() -> None:
-        while not _stop_event.wait(1.0):
-            store.maintenance_tick()
-            store.checkpoint()
+    def _maintenance_loop(interval: float = _MAINTENANCE_INTERVAL_S) -> None:
+        # A tick can raise for reasons that have nothing to do with the store's
+        # health: a full disk, an AV scanner holding the sidecar, a transient
+        # filesystem error. Without this guard the first one ended the thread,
+        # and the only trace was a single threading.expacthook line on stderr —
+        # after which the persist_max_s idle-durability deadline (AUDIT-I16) was
+        # never enforced again for the life of the process. The server kept
+        # answering queries normally while quietly accumulating unwritten
+        # vectors (audit R5).
+        #
+        # Each failure is reported rather than swallowed: a loop that retries
+        # forever in silence is the same false-clean the audit flagged in the
+        # read-only index fallback.
+        while not _stop_event.wait(interval):
+            try:
+                store.maintenance_tick()
+            except Exception as exc:  # noqa: BLE001 - the thread must outlive any error
+                print(
+                    f"omnidb-server: maintenance tick failed: {exc!r}; "
+                    f"retrying in {interval:g}s (unflushed vectors accumulate "
+                    "until it succeeds)",
+                    file=_sys.stderr, flush=True,
+                )
+            try:
+                store.checkpoint()
+            except Exception as exc:  # noqa: BLE001
+                print(
+                    f"omnidb-server: WAL checkpoint failed: {exc!r}; "
+                    f"retrying in {interval:g}s",
+                    file=_sys.stderr, flush=True,
+                )
 
     _maintenance_thread = _threading.Thread(
         target=_maintenance_loop, name="store-maintenance", daemon=True)
@@ -369,7 +401,18 @@ def serve(home=None) -> int:
 
     def _graceful_shutdown(signum, frame):  # noqa: ARG001
         _stop_event.set()
-        store.flush()
+        # A flush failure (a full disk, most often) must not turn a clean SIGINT
+        # into a traceback and skip SystemExit(0) — the operator would see a
+        # stack trace instead of a stop, and the exit status would be wrong.
+        try:
+            store.flush()
+        except Exception as exc:  # noqa: BLE001
+            print(
+                f"omnidb-server: flush during shutdown failed: {exc!r}; "
+                "exiting anyway — the rows are committed and will be "
+                "reconciled on next open",
+                file=_sys.stderr, flush=True,
+            )
         raise SystemExit(0)
 
     for sig in (signal.SIGTERM, signal.SIGINT):
