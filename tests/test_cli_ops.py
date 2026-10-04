@@ -97,7 +97,7 @@ def test_cli_export_import_roundtrip_across_homes(tmp_path, capsys):
 
     reopened = make_store(dst_home)
     assert {h["id"] for h in reopened.recall("kubectl rollout", k=5)} >= {b}
-    rows = reopened.search(f"SELECT src, dst FROM edges WHERE src = {a} AND dst = {b}")
+    rows = reopened.search(f"SELECT src, dst FROM edges WHERE src = {a} AND dst = {b}", unscoped=True)
     assert rows["rows"] == [[a, b]]
     reopened.close()
 

@@ -205,7 +205,7 @@ def test_purge_hard_deletes_and_cascades_edges(store):
     assert store.get(keep) is not None
     assert store.search(
         "SELECT COUNT(*) AS n FROM memory_fts WHERE memory_fts MATCH 'quixotic'"
-    )["rows"][0][0] == 0  # FTS ad-trigger kept the index synced
+, unscoped=True)["rows"][0][0] == 0  # FTS ad-trigger kept the index synced
 
     store.purge(do_vacuum=True)
     assert store.stats()["live"] == 2

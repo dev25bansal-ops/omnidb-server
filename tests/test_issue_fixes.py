@@ -172,7 +172,7 @@ def test_update_memory_reindexes_content(store):
 
     hits = store.recall("beta totally different", k=3)
     assert hits and hits[0]["id"] == mid
-    old = store.search("SELECT COUNT(*) AS n FROM memory_fts WHERE memory_fts MATCH 'initial'")
+    old = store.search("SELECT COUNT(*) AS n FROM memory_fts WHERE memory_fts MATCH 'initial'", unscoped=True)
     assert old["rows"][0][0] == 0  # FTS trigger kept in sync
 
     merged = store.update_memory(mid, metadata={"tag": "x"})
@@ -209,7 +209,7 @@ def test_user_version_tracks_migrations(store):
 
 def test_error_codes_surface(store, monkeypatch):
     with pytest.raises(StoreError) as ro:
-        store.search("DELETE FROM memories")
+        store.search("DELETE FROM memories", unscoped=True)
     assert ro.value.code == "OMN-020"
 
     with pytest.raises(StoreError) as te:
@@ -221,7 +221,7 @@ def test_error_codes_surface(store, monkeypatch):
         store.search(
             "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c) "
             "SELECT sum(x) FROM c"
-        )
+, unscoped=True)
     assert to.value.code == "OMN-011"
 
 

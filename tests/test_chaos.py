@@ -101,7 +101,7 @@ def test_crash_window_chaos(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, ite
         assert reopened.check()["fts_integrity"] == "ok"
         result = reopened.search(
             "SELECT COUNT(*) AS n, COUNT(DISTINCT id) AS d FROM memories"
-        )
+, unscoped=True)
         committed, distinct_ids = result["rows"][0]
         assert committed == distinct_ids
     finally:

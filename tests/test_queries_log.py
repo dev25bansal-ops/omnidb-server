@@ -16,7 +16,7 @@ def test_query_log_disabled_leaves_table_empty(tmp_path):
     try:
         st.remember("alpha bravo charlie delta")
         st.recall("alpha bravo", k=3)
-        st.search("SELECT COUNT(*) AS n FROM memories")
+        st.search("SELECT COUNT(*) AS n FROM memories", unscoped=True)
         assert _queries_rows(st) == []
     finally:
         st.close()
@@ -29,7 +29,7 @@ def test_query_log_enabled_records_recall_and_search(tmp_path):
         st.remember("python generators and iterators explained")
         st.remember("history of jazz chords and improvisation")
         st.recall("python decorators", k=5, agent_id="agent-A")
-        st.search("SELECT COUNT(*) AS n FROM memories")
+        st.search("SELECT COUNT(*) AS n FROM memories", unscoped=True)
         rows = _queries_rows(st)
         assert len(rows) == 2
         kinds = [r["kind"] for r in rows]

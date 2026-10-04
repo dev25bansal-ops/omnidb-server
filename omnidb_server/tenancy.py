@@ -79,10 +79,34 @@ def validate_tenant_id(tenant: str) -> str:
     if bad:
         raise TenantError(
             f"tenant id has characters outside [A-Za-z0-9_-]: {sorted(bad)}")
-    if tenant == DEFAULT_TENANT and False:  # pragma: no cover - documentation
-        # DEFAULT_TENANT is a legal value; this branch documents that the
-        # reserved name is not special-cased away.
-        pass
+    return tenant
+
+
+def validate_credential_tenant(tenant: str) -> str:
+    """Validate a tenant id that a *credential* is being registered against.
+
+    Stricter than :func:`validate_tenant_id` in exactly one way: the reserved
+    single-tenant name is refused.
+
+    ``DEFAULT_TENANT`` remains a legal id in the data model — every pre-tenant
+    row, every single-tenant stdio deployment, and every ``tenant="default"``
+    default argument is written under it, and removing it would be a migration.
+    What must not be possible is *authenticating* someone as that name. When
+    ``default`` was an ordinary tenant, a key registered under it resolved to
+    the single-tenant id, and any name-based privilege check downstream then
+    granted it privileges no other tenant could have (the ``search`` escape
+    hatch; see ``MemoryStore.search``). The capability is now set by the
+    transport instead, so that specific escalation is closed — this check
+    closes the general shape of it, at the credential layer, once.
+    """
+    tenant = validate_tenant_id(tenant)
+    if tenant == DEFAULT_TENANT:
+        raise TenantError(
+            f"tenant id {DEFAULT_TENANT!r} is reserved for the single-tenant "
+            "deployment and cannot be granted to a credential. Pick a name for "
+            "this tenant (it appears in tenants.json / the config `tenants` "
+            "map); the un-tenanted single-tenant case needs no credential."
+        )
     return tenant
 
 
@@ -137,7 +161,7 @@ class TenantRegistry:
     def __post_init__(self) -> None:
         by_digest: dict[str, str] = {}
         for key in self.keys:
-            validate_tenant_id(key.tenant)
+            validate_credential_tenant(key.tenant)
             if key.digest in by_digest:
                 raise TenantError(
                     f"duplicate api key: two entries share a digest and both "
@@ -218,7 +242,7 @@ def load_registry(home: Path, config_tenants: dict | None = None) -> TenantRegis
             merged.setdefault(key, tenant)
 
     keys = tuple(
-        TenantKey(digest=hash_key(key), tenant=validate_tenant_id(tenant),
+        TenantKey(digest=hash_key(key), tenant=validate_credential_tenant(tenant),
                   label="")
         for key, tenant in sorted(merged.items())
     )

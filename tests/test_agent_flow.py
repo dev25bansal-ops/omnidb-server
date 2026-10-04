@@ -28,7 +28,7 @@ def test_agent_first_day(tmp_path):
     kinds = dict(
         (r[0], r[1]) for r in st.search(
             "SELECT kind, COUNT(*) FROM memories GROUP BY kind"
-        )["rows"]
+, unscoped=True)["rows"]
     )
     assert kinds == {"episodic": 3, "semantic": 3}
 

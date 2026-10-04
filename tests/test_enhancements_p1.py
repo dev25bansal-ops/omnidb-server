@@ -32,7 +32,7 @@ def test_schema_reports_tables_and_examples_run(store):
     assert payload["schema_version"] == dbmod.SCHEMA_VERSION
     # every advertised example must actually run under the read-only authorizer
     for sql in payload["examples"]:
-        result = store.search(sql)
+        result = store.search(sql, unscoped=True)
         assert "rows" in result
 
 

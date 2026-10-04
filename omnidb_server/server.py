@@ -32,7 +32,7 @@ def _stdio_tenant() -> str:
     return DEFAULT_TENANT
 
 
-def attach_tools(mcp, store, tenant_resolver=None):
+def attach_tools(mcp, store, tenant_resolver=None, *, unscoped_search=False):
     """Register OmniDB's tool surface on an MCP server.
 
     Shared by the stdio transport (`create_mcp`) and the streamable-HTTP
@@ -41,6 +41,11 @@ def attach_tools(mcp, store, tenant_resolver=None):
     check is missing on that transport.
     """
     resolve_tenant = tenant_resolver or _stdio_tenant
+    # No tenant_resolver means the stdio transport: one process, one pipe, one
+    # identity, so the whole home really is a single trust domain and the raw-SQL
+    # escape hatch is available. A resolver means a credentialed transport
+    # (streamable-HTTP) and the default is fail-closed.
+    unscoped_search = unscoped_search or tenant_resolver is None
 
 
     @mcp.tool()
@@ -76,7 +81,12 @@ def attach_tools(mcp, store, tenant_resolver=None):
     @mcp.tool()
     async def search(sql: str) -> dict:
         """Run a read-only SELECT/WITH statement against SQLite (tables: memories, edges, meta)."""
-        return await _call(store.search, sql, tenant=resolve_tenant())
+        # `unscoped_search` is a transport capability, not a tenant name: only a
+        # caller that declares the whole home one trust domain gets raw SQL. The
+        # HTTP transport never sets it, so an authenticated tenant cannot reach
+        # an unscoped read regardless of what its id is called.
+        return await _call(store.search, sql, tenant=resolve_tenant(),
+                           unscoped=unscoped_search)
 
     @mcp.tool()
     async def schema() -> dict:
@@ -142,7 +152,7 @@ def create_mcp(store):
     from mcp.server.fastmcp import FastMCP
 
     mcp = FastMCP("omnidb")
-    attach_tools(mcp, store)
+    attach_tools(mcp, store, unscoped_search=True)
     return mcp
 
 

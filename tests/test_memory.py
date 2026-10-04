@@ -78,16 +78,16 @@ def test_forget_soft_deletes(store):
     assert not any(r["id"] == mid for r in store.recall("launch credentials", k=5))
     with pytest.raises(StoreError):
         store.forget(mid)  # already deleted
-    row = store.search(f"SELECT deleted_ms FROM memories WHERE id = {mid}")
+    row = store.search(f"SELECT deleted_ms FROM memories WHERE id = {mid}", unscoped=True)
     assert row["rows"][0][0] is not None
 
 
 def test_search_readonly_guard(store):
     with pytest.raises(StoreError):
-        store.search("DELETE FROM memories")
+        store.search("DELETE FROM memories", unscoped=True)
     with pytest.raises(StoreError):
-        store.search("INSERT INTO memories(content) VALUES ('x')")
-    out = store.search("SELECT COUNT(*) AS n FROM memories")
+        store.search("INSERT INTO memories(content) VALUES ('x')", unscoped=True)
+    out = store.search("SELECT COUNT(*) AS n FROM memories", unscoped=True)
     assert out["columns"] == ["n"]
 
 
@@ -106,7 +106,7 @@ def test_search_truncation(tmp_path):
     out = st.search(
         "WITH RECURSIVE cnt(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM cnt WHERE x<10) "
         "SELECT x FROM cnt"
-    )
+, unscoped=True)
     assert len(out["rows"]) == 3
     assert out["truncated"] is True
     st.close()

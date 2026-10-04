@@ -86,11 +86,11 @@ def test_recall_latency(bench):
 
 def test_search_count(bench):
     store, _ids, _write_s = bench
-    store.search("SELECT COUNT(*) FROM memories")
+    store.search("SELECT COUNT(*) FROM memories", unscoped=True)
     worst = 0.0
     for _ in range(3):
         t0 = time.perf_counter()
-        store.search("SELECT COUNT(*) FROM memories")
+        store.search("SELECT COUNT(*) FROM memories", unscoped=True)
         worst = max(worst, (time.perf_counter() - t0) * 1000)
     print(f"\nsearch COUNT(*) worst of 3: {worst:.2f} ms")
     assert worst < _SEARCH_LIMIT_MS

@@ -92,7 +92,7 @@ def test_concurrent_search_and_writers_do_not_hang_or_crash(tmp_path):
     def searcher():
         while not stop.is_set():
             try:
-                st.search("SELECT id FROM memories LIMIT 5")
+                st.search("SELECT id FROM memories LIMIT 5", unscoped=True)
             except Exception as exc:  # pragma: no cover - failure reporting
                 errors.append(exc)
                 return

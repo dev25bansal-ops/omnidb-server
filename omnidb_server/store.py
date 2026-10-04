@@ -841,14 +841,21 @@ class MemoryStore:
                           log_query=self._query_log_enabled, tenant=tenant)
 
     @_serialized
-    def search(self, sql: str, tenant: str = "default") -> dict:
+    def search(self, sql: str, tenant: str = "default", *,
+               unscoped: bool = False) -> dict:
         # ADR-08: raw SQL cannot be tenant-scoped safely — SQLite's authorizer
         # sees column names, never predicate values, so a `WHERE` is invisible
-        # to it and `SELECT * FROM memories` would cross tenants. Fail closed:
-        # the escape hatch stays available on the single-tenant path (the CLI,
-        # and stdio, which both run as 'default'), and is refused for any
-        # credentialed tenant rather than silently leaking.
-        if tenant != "default":
+        # to it and `SELECT * FROM memories` would cross tenants.
+        #
+        # The gate is the `unscoped` CAPABILITY, set only by a transport that
+        # knows the whole home is one trust domain (the CLI, and stdio via
+        # attach_tools). It used to be `tenant != "default"` — a comparison
+        # against an operator-controlled *name*. `default` is a legal tenant id
+        # in a key map, so a credential registered under the most natural name
+        # (the same one every single-tenant deployment already uses) unlocked
+        # an unscoped read of every tenant's rows. The name is data; the
+        # capability is not, so the capability is what we branch on.
+        if not unscoped:
             raise StoreError(
                 "search is unavailable to scoped tenants; run it via the "
                 "single-tenant CLI where the whole home is one trust domain",

@@ -10,12 +10,12 @@ def test_with_delete_blocked_and_data_intact(store):
     store.remember("precious memory one")
     store.remember("precious memory two")
     with pytest.raises(StoreError):
-        store.search("WITH t AS (SELECT 1) DELETE FROM memories")
+        store.search("WITH t AS (SELECT 1) DELETE FROM memories", unscoped=True)
     with pytest.raises(StoreError):
-        store.search("WITH t AS (SELECT 1) UPDATE memories SET content = 'x'")
+        store.search("WITH t AS (SELECT 1) UPDATE memories SET content = 'x'", unscoped=True)
     with pytest.raises(StoreError):
-        store.search("PRAGMA journal_mode=DELETE")
-    out = store.search("SELECT COUNT(*) AS n FROM memories")
+        store.search("PRAGMA journal_mode=DELETE", unscoped=True)
+    out = store.search("SELECT COUNT(*) AS n FROM memories", unscoped=True)
     assert out["rows"][0][0] == 2
 
 
@@ -25,7 +25,7 @@ def test_runaway_cte_aborted_by_step_budget(store, monkeypatch):
         store.search(
             "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c) "
             "SELECT sum(x) FROM c"
-        )
+, unscoped=True)
 
 
 def test_related_cycle_safe(store):
@@ -99,6 +99,6 @@ def test_llm_failure_does_not_consume_episodes(tmp_path, monkeypatch):
 
     flagged = st.search(
         "SELECT metadata FROM memories WHERE kind = 'episodic' AND metadata LIKE '%consolidated%'"
-    )
+, unscoped=True)
     assert flagged["rows"] == []  # episodes left retryable
     st.close()

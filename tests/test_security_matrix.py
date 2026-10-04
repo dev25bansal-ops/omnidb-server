@@ -42,9 +42,9 @@ _DENY_CASES = [
 def test_denied_sql_rejected_with_code(store, sql, expected_code):
     store.remember("sentinel row that must survive")
     with pytest.raises(StoreError) as exc:
-        store.search(sql)
+        store.search(sql, unscoped=True)
     assert exc.value.code == expected_code
-    assert store.search("SELECT COUNT(*) FROM memories")["rows"] == [[1]]
+    assert store.search("SELECT COUNT(*) FROM memories", unscoped=True)["rows"] == [[1]]
 
 
 # --- analysis 6.5: authorizer allow matrix ---------------------------------------
@@ -71,7 +71,7 @@ _ALLOW_CASES = [
 @pytest.mark.parametrize(("sql", "first_row"), _ALLOW_CASES)
 def test_allowed_sql_executes(store, sql, first_row):
     store.remember("alpha beta gamma payload")
-    out = store.search(sql)
+    out = store.search(sql, unscoped=True)
     assert out["truncated"] is False
     assert out["rows"]
     if first_row is not None:
@@ -86,9 +86,9 @@ def test_pragma_data_version_allowance_scope(store):
     # read-only surface for it is the equivalent table-valued form below, which
     # must yield exactly one row.
     store.remember("alpha beta gamma payload")
-    matched = store.search("SELECT rowid FROM memory_fts WHERE memory_fts MATCH 'alpha'")
+    matched = store.search("SELECT rowid FROM memory_fts WHERE memory_fts MATCH 'alpha'", unscoped=True)
     assert matched["rows"] == [[1]]
-    out = store.search("SELECT * FROM pragma_data_version")
+    out = store.search("SELECT * FROM pragma_data_version", unscoped=True)
     assert out["columns"] == ["data_version"]
     assert len(out["rows"]) == 1
 
@@ -104,7 +104,7 @@ def test_extension_loading_fails_closed(store):
     with pytest.raises(sqlite3.DatabaseError, match="not authorized"):
         conn.execute("SELECT load_extension('omnidb_no_such_extension')")
     with pytest.raises(StoreError) as exc:
-        store.search("SELECT load_extension('omnidb_no_such_extension')")
+        store.search("SELECT load_extension('omnidb_no_such_extension')", unscoped=True)
     assert exc.value.code == "OMN-020"
 
 
@@ -119,8 +119,8 @@ def test_denials_leave_transaction_clean(store):
     )
     for sql in attempts:
         with pytest.raises(StoreError):
-            store.search(sql)
+            store.search(sql, unscoped=True)
     assert store.conn.in_transaction is False
-    assert store.search("SELECT COUNT(*) FROM memories")["rows"] == [[2]]
+    assert store.search("SELECT COUNT(*) FROM memories", unscoped=True)["rows"] == [[2]]
     hits = store.recall("keeper two", k=2)
     assert hits[0]["content"] == "keeper two"

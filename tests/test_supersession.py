@@ -32,7 +32,7 @@ def test_second_run_dedups_near_identical_episodes(tmp_path):
     assert report2["facts_created"] == 0
     assert report2["facts_deduplicated"] == 3
 
-    rows = st.search("SELECT COUNT(*) FROM memories WHERE kind = 'semantic'")["rows"]
+    rows = st.search("SELECT COUNT(*) FROM memories WHERE kind = 'semantic'", unscoped=True)["rows"]
     assert rows[0][0] == 3  # no new semantic rows were created
     hits = st.recall("deploy runbook version tag release branch", k=5, kind="semantic")
     assert len(hits) == 3
@@ -71,6 +71,6 @@ def test_no_dedup_below_threshold(tmp_path):
     assert report["facts_created"] == 3
     assert report["facts_deduplicated"] == 0
 
-    rows = st.search("SELECT COUNT(*) FROM memories WHERE kind = 'semantic'")["rows"]
+    rows = st.search("SELECT COUNT(*) FROM memories WHERE kind = 'semantic'", unscoped=True)["rows"]
     assert rows[0][0] == 6
     st.close()

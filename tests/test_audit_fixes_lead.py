@@ -169,11 +169,11 @@ def test_tiny_instruction_budget_interrupts(store):
     with pytest.raises(StoreError) as exc:
         store.search(
             "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n "
-            "WHERE i < 100000) SELECT count(*) FROM n")
+            "WHERE i < 100000) SELECT count(*) FROM n", unscoped=True)
     assert exc.value.code == "OMN-011"
     # handlers are cleaned up on the interrupt path: a normal query works
     store.max_query_steps = 5_000_000
-    result = store.search("SELECT id FROM memories LIMIT 2")
+    result = store.search("SELECT id FROM memories LIMIT 2", unscoped=True)
     assert len(result["rows"]) == 2
 
 
@@ -183,7 +183,7 @@ def test_search_result_byte_cap(store):
     original = store_mod._QUERY_RESULT_BYTES_LIMIT
     store_mod._QUERY_RESULT_BYTES_LIMIT = 100
     try:
-        result = store.search("SELECT content FROM memories")
+        result = store.search("SELECT content FROM memories", unscoped=True)
     finally:
         store_mod._QUERY_RESULT_BYTES_LIMIT = original
     assert result["truncated"] is True

@@ -29,7 +29,7 @@ def test_stub_consolidation_idempotent(tmp_path):
 
     flagged = st.search(
         "SELECT metadata FROM memories WHERE kind = 'episodic'"
-    )
+, unscoped=True)
     metas = [json.loads(row[0]) for row in flagged["rows"]]
     consolidated_ids = {m.get("consolidated") for m in metas}
     assert True in consolidated_ids

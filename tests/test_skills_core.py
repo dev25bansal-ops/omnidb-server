@@ -208,7 +208,7 @@ def test_query_stats_aggregates_by_kind_and_top_queries(tmp_path):
         st.remember("python decorators guide with examples")
         st.recall("python decorators", k=3)
         st.recall("python decorators", k=5)
-        st.search("SELECT COUNT(*) AS n FROM memories")
+        st.search("SELECT COUNT(*) AS n FROM memories", unscoped=True)
         stats = st.query_stats(hours=24.0)
         assert stats["window_hours"] == 24.0
         assert set(stats["by_kind"]) == {"recall", "search"}
