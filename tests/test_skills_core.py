@@ -193,7 +193,11 @@ def test_query_stats_empty_table(tmp_path):
     st = conftest.make_store(tmp_path, query_log=True)
     try:
         stats = st.query_stats(hours=24.0)
-        assert stats == {"window_hours": 24.0, "by_kind": {}, "top_queries": []}
+        # `tenant` is None in the payload for the unscoped operator view: the
+        # caller did not scope it, and reporting "default" would misreport a
+        # whole-home aggregate as one tenant's.
+        assert stats == {"window_hours": 24.0, "tenant": None, "total": 0,
+                         "by_kind": {}, "top_queries": []}
         assert st.query_stats(hours=0.0)["top_queries"] == []
     finally:
         st.close()

@@ -187,7 +187,8 @@ def test_query_stats_prints_json_with_default_window(tmp_path, capsys):
 
     assert cli.main(["query-stats", "--home", str(tmp_path)]) == 0
     stats = json.loads(capsys.readouterr().out)
-    assert stats == {"window_hours": 24.0, "by_kind": {}, "top_queries": []}
+    assert stats == {"window_hours": 24.0, "tenant": "default", "total": 0,
+                         "by_kind": {}, "top_queries": []}
 
     assert cli.main(["query-stats", "--hours", "0", "--home", str(tmp_path)]) == 0
     assert json.loads(capsys.readouterr().out)["window_hours"] == 0.0

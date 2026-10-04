@@ -131,18 +131,26 @@ def _serialized(method):
 
 def _record_query(store: "MemoryStore", kind: str, query: str,
                   result_count: int, took_ms: float, agent_id: str | None,
-                  commit: bool = True) -> None:
+                  tenant: str = "default", commit: bool = True) -> None:
     """Insert a query-log row; opt-in via cfg.query_log (ARCH-03: the flag is
     plain instance state, not a module-level id(conn) set). Every
     ``query_retention_rows`` inserts the table is pruned to the newest rows
-    (PERF-05) so a busy logged server cannot grow the home without bound."""
+    (PERF-05) so a busy logged server cannot grow the home without bound.
+
+    `tenant` is written explicitly. The column was added by migration 4 but
+    this INSERT omitted it, so every logged row silently took the 'default'
+    value: a recall issued by `acme` was recorded as `default`'s, which made
+    per-tenant query attribution impossible, left `query-log` dumping every
+    tenant's verbatim query text, and meant no tenant's query history could
+    ever be erased (audit C15/R8)."""
     if not store._query_log_enabled:
         return
     try:
         store.conn.execute(
-            "INSERT INTO queries(agent_id, kind, query, result_count, took_ms, created_ms) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (agent_id, kind, query, result_count, took_ms, int(time.time() * 1000)),
+            "INSERT INTO queries(agent_id, kind, query, result_count, took_ms, "
+            "created_ms, tenant_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (agent_id, kind, query, result_count, took_ms,
+             int(time.time() * 1000), tenant),
         )
         store._query_inserts += 1
         max_rows = store.cfg.query_retention_rows
@@ -962,7 +970,8 @@ class MemoryStore:
             "rows": [list(r) for r in rows[: self.cfg.max_search_rows]],
             "truncated": truncated,
         }, t0)
-        _record_query(self, "search", sql, len(rows), result["took_ms"], None)
+        _record_query(self, "search", sql, len(rows), result["took_ms"], None,
+                       tenant=tenant)
         return result
 
     @_serialized
@@ -1305,14 +1314,25 @@ class MemoryStore:
         ]
 
     @_serialized
-    def query_stats(self, hours: float = 24.0) -> dict:
+    def query_stats(self, hours: float = 24.0,
+                    tenant: str | None = None) -> dict:
         """Aggregate the query log over a trailing window (F-02).
 
         Read-only; an empty queries table (log disabled) yields empty
         structures rather than an error.
+
+        `tenant` scopes the aggregation to one tenant's own queries. It is
+        optional and defaults to the whole home because the single-tenant
+        operator's view is the unscoped one; on a multi-tenant home the caller
+        passes a tenant to avoid one tenant seeing another's query text.
         """
         window = max(float(hours), 0.0)
         cutoff = int((self.now_fn() - window * 3600.0) * 1000)
+        # Scoped: AND tenant_id = ?. Unscoped: no predicate at all, which is the
+        # single-tenant operator's view. Both are bound parameters — the SQL is
+        # a fixed string, so the AST splice guard (SEC-A3-10) sees nothing to
+        # flag and there is no string-concatenation shape to get wrong.
+        params: list = [cutoff, tenant, tenant]
         by_kind = {
             r["kind"]: {
                 "count": int(r["n"]),
@@ -1321,20 +1341,28 @@ class MemoryStore:
             }
             for r in self.conn.execute(
                 "SELECT kind, COUNT(*) AS n, AVG(took_ms) AS avg_ms, MAX(took_ms) AS max_ms "
-                "FROM queries WHERE created_ms >= ? GROUP BY kind",
-                (cutoff,),
+                "FROM queries WHERE created_ms >= ? "
+                "AND (? IS NULL OR tenant_id = ?) GROUP BY kind",
+                params,
             )
         }
         top_queries = [
             {"query": r["query"], "count": int(r["n"])}
             for r in self.conn.execute(
-                "SELECT query, COUNT(*) AS n FROM queries WHERE created_ms >= ? "
+                "SELECT query, COUNT(*) AS n FROM queries "
+                "WHERE created_ms >= ? AND (? IS NULL OR tenant_id = ?) "
                 "GROUP BY query ORDER BY n DESC, query LIMIT 10",
-                (cutoff,),
+                params,
             )
         ]
-        return {"window_hours": window, "by_kind": by_kind,
-                "top_queries": top_queries}
+        # COUNT from the same predicate, so `total` cannot drift from by_kind.
+        total = int(self.conn.execute(
+            "SELECT COUNT(*) FROM queries WHERE created_ms >= ? "
+            "AND (? IS NULL OR tenant_id = ?)",
+            params,
+        ).fetchone()[0])
+        return {"window_hours": window, "tenant": tenant, "total": total,
+                "by_kind": by_kind, "top_queries": top_queries}
 
     @_serialized
     def schema(self) -> dict:

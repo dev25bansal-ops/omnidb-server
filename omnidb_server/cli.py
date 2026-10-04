@@ -105,6 +105,9 @@ def main(argv: list[str] | None = None) -> int:
                             help="dump recent query-log entries as JSON")
     p_qlog.add_argument("--limit", type=int, default=20,
                         help="max rows to return (most-recent first)")
+    _add_tenant_flag(p_qlog, "only this tenant's queries (default: the whole "
+                             "home, which on a multi-tenant deployment is "
+                             "every tenant's verbatim query text)")
     p_purge = sub.add_parser("purge", parents=[common],
                              help="hard-delete soft-deleted memories")
     p_purge.add_argument("--vacuum", action="store_true",
@@ -157,6 +160,8 @@ def main(argv: list[str] | None = None) -> int:
                               help="aggregate the query log over a trailing window")
     p_qstats.add_argument("--hours", type=float, default=24.0,
                           help="window size in hours (default 24)")
+    _add_tenant_flag(p_qstats, "only aggregate this tenant's queries "
+                               "(default: the whole home)")
 
     args = parser.parse_args(argv)
     home = getattr(args, "home", None)
@@ -251,7 +256,9 @@ def main(argv: list[str] | None = None) -> int:
             store = open_read_only_store(cfg)
             try:
                 if args.command == "query-stats":
-                    print(json.dumps(store.query_stats(args.hours), indent=2))
+                    print(json.dumps(store.query_stats(
+                        args.hours,
+                        tenant=_tenant_flag(args)), indent=2))
                 elif args.command == "stats":
                     print(json.dumps(store.stats(), indent=2))
                 elif args.command == "schema":
@@ -268,8 +275,10 @@ def main(argv: list[str] | None = None) -> int:
                     ), indent=2))
                 elif args.command == "query-log":
                     rows = store.conn.execute(
-                        "SELECT * FROM queries ORDER BY created_ms DESC LIMIT ?",
-                        (args.limit,),
+                        "SELECT * FROM queries "
+                        "WHERE (? IS NULL OR tenant_id = ?) "
+                        "ORDER BY created_ms DESC LIMIT ?",
+                        (_tenant_flag(args), _tenant_flag(args), args.limit),
                     ).fetchall()
                     print(json.dumps([dict(r) for r in rows], indent=2))
                 elif args.command == "tenants":

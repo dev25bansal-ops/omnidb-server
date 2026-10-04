@@ -279,7 +279,7 @@ def run_recall(store, query: str, k: int, kind, k_fetch,
     if log_query:
         _record_query(store, "recall", query, len(results),
                       round((time.perf_counter() - t0) * 1000, 2), agent_id,
-                      commit=False)
+                      tenant=tenant, commit=False)
     if final_ids or log_query:
         try:
             store.conn.commit()
