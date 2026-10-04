@@ -1,5 +1,20 @@
 """Per-tenant FTS5 table lifecycle (ADR-08, storage-design appendix).
 
+## NOT WIRED IN — read this before importing
+
+**Nothing in the shipped read or write path calls this module.** The lexical leg
+still queries the single global `memory_fts` table, fenced by a `tenant_id`
+predicate on the joined `memories` row (`recall.py`) rather than by separate
+tables. This module is the *designed* mechanism, built and unit-tested, awaiting
+the W3-3 migration (audit finding C14).
+
+That distinction matters because external-content FTS5 **cannot** be filtered
+per tenant — which is why this module exists — so the current predicate fence is
+the shipped behaviour and this is not. Do not read the code below as a
+description of what the server does today; read it as what it will do after
+W3-3, and read `docs/adr/ADR-08-multi-tenant-rebuild.md` for the migration plan
+and `docs/adr/ADR-08-w3-progress.md` for its status.
+
 ## Why this exists
 
 The single `memory_fts` table is an **external-content** FTS5 table bound to the
