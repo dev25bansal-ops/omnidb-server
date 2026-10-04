@@ -29,6 +29,8 @@ SQLite database and the admission properties run against ``tmp_path``.
 
 from __future__ import annotations
 
+import ast
+import inspect
 import json
 import re
 import sqlite3
@@ -84,14 +86,24 @@ def _reference_fts_expression(text: str, max_terms: int = 24) -> str:
     # intentionally independent literal copy of fusion._STOP_WORDS: importing
     # the real set would let a mutation of it silence this property instead of
     # being caught by it.
+    #
+    # It must stay in EXACT agreement with production, which is why the two
+    # disagree loudly rather than silently: an earlier copy of this literal
+    # carried did/do/does, which fusion._STOP_WORDS deliberately omits, and the
+    # divergence only surfaced when Hypothesis happened to generate an input
+    # containing one of them (audit finding C1). "do" in particular is load
+    # bearing on the production side — test_fusion_values.py pins
+    # fts_match_query("what not to do") == '"not" OR "do"', because "do" carries
+    # negation signal in questions. Keep this copy byte-identical to
+    # fusion._STOP_WORDS; test_fusion_stopword_sets_agree below fails the moment
+    # it drifts.
     _STOP = {
         "a", "an", "and", "are", "as", "at", "be", "but", "by", "can", "could",
-        "did", "do", "does", "for", "from", "get", "has", "have", "how", "i",
-        "if", "in", "is", "it", "its", "me", "my", "of", "on", "or", "our",
-        "out", "should", "that", "the", "their", "them", "then", "there",
-        "these", "they", "this", "to", "up", "us", "was", "we", "were", "what",
-        "when", "where", "which", "who", "why", "will", "with", "would", "you",
-        "your",
+        "for", "from", "get", "has", "have", "how", "i", "if",
+        "in", "is", "it", "its", "me", "my", "of", "on", "or", "our", "out",
+        "should", "that", "the", "their", "them", "then", "there", "these",
+        "they", "this", "to", "up", "us", "was", "we", "were", "what", "when",
+        "where", "which", "who", "why", "will", "with", "would", "you", "your",
     }
     tokens = [t for t in tokens if t not in _STOP]
     return " OR ".join('"%s"' % token for token in tokens[:max_terms])
@@ -196,6 +208,42 @@ def test_fts_injection_shapes_are_quoted_literals_only(shape, fts_conn):
         assert _SEGMENT.match(segment), (shape, expr, segment)
     # and it parses as valid MATCH syntax
     _match_rows(fts_conn, expr)
+
+
+def test_fusion_stopword_sets_agree():
+    """The reference oracle's stopword copy must equal production's, exactly.
+
+    Audit finding C1: this property module carries its own literal copy of the
+    stopword set so a mutation of the real one cannot silence the properties.
+    That independence is the point — and its cost is that the two can drift,
+    which is exactly what happened: the copy carried did/do/does and production
+    deliberately does not. The divergence was invisible until Hypothesis
+    happened to generate an input containing one of those words, because the
+    generators sample random text and those tokens are rare.
+
+    A drift guard turns a rare, cache-dependent, ordering-dependent failure into
+    a deterministic one that runs in under a millisecond. The word "do" cannot
+    drift back without this test going red first.
+    """
+    from omnidb_server.fusion import _STOP_WORDS
+
+    # Recover the oracle's literal from its own source rather than maintaining a
+    # third copy here — a third copy could drift from the oracle the same way the
+    # oracle drifted from production, which would make this guard a no-op.
+    source = inspect.getsource(_reference_fts_expression)
+    oracle_stop: set[str] = set()
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Assign) and getattr(node.targets[0], "id", "") == "_STOP":
+            namespace: dict = {}
+            exec(compile(ast.Module(body=[node], type_ignores=[]), "<oracle>", "exec"),
+                 namespace)
+            oracle_stop = namespace["_STOP"]
+    assert oracle_stop, "could not recover the oracle's _STOP literal"
+    assert oracle_stop == set(_STOP_WORDS), (
+        "the reference oracle's stopword copy has drifted from "
+        f"fusion._STOP_WORDS: only-in-oracle={sorted(oracle_stop - set(_STOP_WORDS))}, "
+        f"only-in-production={sorted(set(_STOP_WORDS) - oracle_stop)}"
+    )
 
 
 @settings(max_examples=200, deadline=None)
