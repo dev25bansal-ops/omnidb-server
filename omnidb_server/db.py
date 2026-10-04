@@ -123,6 +123,12 @@ def connect(home: Path) -> sqlite3.Connection:
         conn.execute("PRAGMA synchronous=NORMAL")
         conn.execute("PRAGMA foreign_keys=ON")
         conn.execute("PRAGMA busy_timeout=5000")
+        # Zero freed pages instead of leaving the old bytes in place until the
+        # page is reused. `purge` is the operation that promises erasure, and
+        # without this a freed page keeps the deleted content readable to
+        # anything that opens the file. Costs a memset per deleted page, which
+        # is negligible against the embeddings a memory carries.
+        conn.execute("PRAGMA secure_delete=ON")
         _migrate(conn)
         try:
             conn.execute("SELECT 1 FROM memory_fts LIMIT 0").fetchone()

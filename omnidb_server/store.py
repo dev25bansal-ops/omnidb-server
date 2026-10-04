@@ -1396,6 +1396,17 @@ class MemoryStore:
             # AUDIT-I02: a read-only diagnostic store must never flush.
             if not self._read_only:
                 self.flush()
+                # A PASSIVE checkpoint is permitted to no-op and never
+                # truncates, so the WAL keeps a complete plaintext copy of
+                # everything written this session — including rows an operator
+                # purged and believes are erased. TRUNCATE resets the file to
+                # zero length; it fails harmlessly if another connection is
+                # still reading the home, which is the same case PASSIVE
+                # tolerated (audit R6/erasure).
+                try:
+                    self.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                except sqlite3.OperationalError:
+                    pass  # a concurrent reader blocks it; nothing to do
         finally:
             self.conn.close()
 
