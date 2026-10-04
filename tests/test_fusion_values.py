@@ -383,3 +383,57 @@ def test_fts_does_not_strip_caller_supplied_combining_marks():
     # the two spellings disagree, which is F38 - recorded, not fixed
     assert fts_match_query(decomposed_acute) != fts_match_query(
         "caf" + chr(0xE9))
+
+
+def test_rrf_rejects_mismatched_weights():
+    """The docstring says the lengths must match; `zip` silently truncated.
+
+    `for ranked, weight in zip(rankings, weights)` stops at the shorter
+    iterable, so one weight against two rankings discarded the whole second leg:
+    its ids vanished from the result and ids it shared with the first leg lost
+    their second contribution. No exception, no warning (audit C10).
+
+    The only production caller passes two hard-coded 2-element literals, so
+    this was latent rather than live — but it is an exported helper and the
+    failure is silent, which is the worst combination for a ranking function.
+    """
+    from omnidb_server.fusion import rrf
+
+    with pytest.raises(ValueError, match="weights"):
+        rrf([[1, 2, 3], [3, 4, 5]], weights=[1.0])
+    with pytest.raises(ValueError, match="weights"):
+        rrf([[1, 2, 3]], weights=[1.0, 0.5])
+    with pytest.raises(ValueError, match="weights"):
+        rrf([[1, 2], [3, 4]], weights=[])
+
+
+def test_rrf_accepts_the_matching_cases():
+    """Equal lengths and weights=None are the two supported shapes."""
+    from omnidb_server.fusion import rrf
+
+    assert rrf([[1, 2, 3], [3, 4, 5]]) == rrf([[1, 2, 3], [3, 4, 5]],
+                                              weights=[1.0, 1.0])
+    assert rrf([[1, 2, 3]]) == rrf([[1, 2, 3]], weights=[1.0])
+
+
+def test_rrf_still_combines_both_legs():
+    """The control: the fix must not change what a correct call returns.
+
+    Pinning the actual scores, because "it raises on mismatch" is only half the
+    property — the happy path has to keep combining legs.
+    """
+    from omnidb_server.fusion import rrf
+
+    scores = rrf([[1, 2], [2, 3]], k=60, weights=[0.7, 0.3])
+    assert set(scores) == {1, 2, 3}
+    # id 2 appears in both legs, so it must outrank the single-leg ids
+    assert scores[2] > scores[1]
+    assert scores[2] > scores[3]
+
+
+def test_rrf_empty_weights_with_empty_rankings_is_allowed():
+    """Both empty is degenerate but consistent, not a mismatch."""
+    from omnidb_server.fusion import rrf
+
+    assert rrf([], weights=[]) == {}
+    assert rrf([]) == {}

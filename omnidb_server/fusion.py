@@ -78,6 +78,15 @@ def rrf(rankings: list[list[int]], k: int = 60,
     scores: dict[int, float] = {}
     if weights is None:
         weights = [1.0] * len(rankings)
+    elif len(weights) != len(rankings):
+        # The loop below zips the two, and `zip` stops at the shorter iterable.
+        # A mismatch therefore discarded a whole leg silently: its ids vanished
+        # from the result and shared ids lost their contribution, with no
+        # exception and no warning. The docstring above already said the
+        # lengths must match; this makes it true (audit C10).
+        raise ValueError(
+            f"rrf: len(weights)={len(weights)} != len(rankings)={len(rankings)}"
+        )
     for ranked, weight in zip(rankings, weights):
         for position, mid in enumerate(ranked):
             scores[mid] = scores.get(mid, 0.0) + weight / (k + position + 1)
