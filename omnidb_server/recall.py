@@ -45,6 +45,35 @@ def _compiled_pattern(pat: str) -> re.Pattern | None:
     return compiled
 
 
+def _as_mapping(value) -> dict:
+    """Coerce a parsed or unparsed metadata value into a dict.
+
+    `metadata` is a JSON column, so a row can legitimately contain a list, a
+    string or a number. The main result path passes `json.loads(...)` through
+    unchanged and is fine with that; the skill-trigger merge is not, because it
+    splats the value (`{**parsed}`) and a non-mapping raises
+    `TypeError: 'list' object is not a mapping` (audit C11).
+
+    `skills.py` and `portability.py` already `isinstance(..., dict)` before
+    touching `.get()`; this brings recall in line with them. A non-object
+    becomes `{}` so the merge can still add `skill_trigger` — tolerating the row
+    by *dropping* it would be a quieter bug than the crash, because the row
+    would then vanish from skill recall with no error at all.
+
+    Accepts both forms because the two merge sites differ: one reads the raw
+    column, the other reads a value `run_recall` already parsed.
+    """
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except ValueError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
+
+
 def run_recall(store, query: str, k: int, kind, k_fetch,
                agent_id, reranker, log_query: bool = False,
                tenant: str = "default") -> list[dict]:
@@ -212,7 +241,7 @@ def run_recall(store, query: str, k: int, kind, k_fetch,
                 "id": row["id"],
                 "kind": row["kind"],
                 "content": row["content"],
-                "metadata": {**json.loads(row["metadata"]), "skill_trigger": True},
+                "metadata": {**_as_mapping(row["metadata"]), "skill_trigger": True},
                 "created_at": _iso(row["created_ms"]),
                 "access_count": row["access_count"],
                 "rrf": round(0.0, 6),
@@ -222,8 +251,12 @@ def run_recall(store, query: str, k: int, kind, k_fetch,
             })
             seen.add(row["id"])
     for item in results:
-        if item["id"] in triggered and "skill_trigger" not in item["metadata"]:
-            item["metadata"] = {**item["metadata"], "skill_trigger": True}
+        if item["id"] in triggered and not (isinstance(item["metadata"], dict)
+                                             and "skill_trigger" in item["metadata"]):
+            # A non-object metadata is coerced here rather than skipped: the tag
+            # is what makes the row reachable through skill recall.
+            item["metadata"] = {**_as_mapping(item["metadata"]),
+                                "skill_trigger": True}
 
     if reranker is not None:
         from .rerank import apply_reranker
