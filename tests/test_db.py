@@ -17,6 +17,14 @@ def test_synchronous_normal_and_busy_timeout(store):
     assert store.conn.execute("PRAGMA busy_timeout").fetchone()[0] == 5000
 
 
+def _fts_hit(store, term):
+    """The default tenant's FTS table is `fts_default` (ADR-08 / W3-3)."""
+    return store.conn.execute(
+        'SELECT rowid FROM "fts_default" WHERE "fts_default" MATCH ?',
+        (term,),
+    ).fetchone()
+
+
 def test_fts_explicit_sync(store):
     """ADR-08 / W3-3: FTS is synchronised by the write path, not triggers.
 
@@ -26,22 +34,15 @@ def test_fts_explicit_sync(store):
     retrieval path.
     """
     store.remember("zebra migrations across the serengeti")
-    hit = store.conn.execute(
-        "SELECT rowid FROM memory_fts WHERE memory_fts MATCH 'serengeti'"
-    ).fetchone()
-    assert hit is not None
+    assert _fts_hit(store, "serengeti") is not None
 
 
 def test_fts_content_update_keeps_postings_consistent(store):
     """A content edit replaces the FTS posting, not appends a second one."""
     mid = store.remember("initial wording")["id"]
     store.update_memory(mid, content="revised phrasing")
-    assert store.conn.execute(
-        "SELECT rowid FROM memory_fts WHERE memory_fts MATCH 'initial'"
-    ).fetchone() is None
-    assert store.conn.execute(
-        "SELECT rowid FROM memory_fts WHERE memory_fts MATCH 'revised'"
-    ).fetchone() is not None
+    assert _fts_hit(store, "initial") is None
+    assert _fts_hit(store, "revised") is not None
 
 
 def test_meta_roundtrip(store):

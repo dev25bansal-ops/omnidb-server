@@ -3,7 +3,17 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
+
+# The shadow tables FTS5 creates alongside every virtual table. DROP TABLE on
+# the virtual table removes only the table itself and orphans these, after which
+# CREATE VIRTUAL TABLE with the same name fails — so v6 drops them explicitly
+# before recreating a tenant's index.
+#
+# Module-level and literal so the AST splice guard (SEC-A3-10) can verify every
+# identifier built from it; a typo here would otherwise silently orphan a shadow
+# table and only surface as an unopenable home.
+_FTS_SHADOW_SUFFIXES = ("_content", "_data", "_idx", "_docsize", "_config")
 
 # Migration 1 is the base schema. Later schema changes append here as
 # (version, ddl) pairs; PRAGMA user_version tracks the applied head.
@@ -102,9 +112,120 @@ CREATE VIRTUAL TABLE memory_fts USING fts5(content, tokenize='porter unicode61')
 INSERT INTO memory_fts(rowid, content) SELECT id, content FROM memories;
 """
 
+# ADR-08 / W3-3: one FTS5 table per tenant. The data movement is NOT in this
+# string — it needs one statement per tenant, with a runtime table name, which
+# is exactly the interpolation surface the v4 comment warns about. So the DDL
+# here only drops the shared table, and `_migrate` calls
+# `_populate_per_tenant_fts` (below) inside the same transaction to create and
+# fill each tenant's table, then verifies before publishing v6.
+_MIGRATION_6 = """
+DROP TABLE IF EXISTS memory_fts;
+"""
+
+
+def _populate_per_tenant_fts(conn: sqlite3.Connection) -> None:
+    """Create and fill one FTS table per tenant. Runs inside v6's transaction.
+
+    Every tenant present in `memories` gets a table, including `default` — which
+    holds every pre-tenant row and every `tenant="default"` default argument, so
+    a home that predates tenancy still migrates into something searchable.
+
+    Soft-deleted rows are indexed too, deliberately and matching migration 5:
+    `forget` replaces a posting (delete old, insert new) so the vector sidecar
+    stays consistent, and dropping soft-deleted rows from FTS would change what
+    that does silently.
+    """
+    from .tenant_schema import fts_table_name
+
+    tenants = [r[0] for r in conn.execute(
+        "SELECT DISTINCT tenant_id FROM memories ORDER BY tenant_id")]
+    for tenant in tenants:
+        # Deliberately not register_and_create: it opens its own transaction and
+        # commits, which would end the migration's. Its atomicity (marker and
+        # CREATE together) is supplied by the caller's transaction instead.
+        #
+        # DROP before CREATE, not IF NOT EXISTS, because this migration must be
+        # re-runnable. A home can arrive at v6 with per-tenant tables already
+        # present — a torn upgrade, a `user_version` rewound for recovery, or a
+        # build that already shipped v6 — and inserting the same rowids into a
+        # populated FTS table raises a constraint failure partway through, so
+        # the whole migration rolls back and the home cannot open. Rebuilding
+        # makes the result a function of the rows rather than of the history,
+        # which is the same property migration 5 has.
+        bare = f"fts_{tenant}"  # fts_table_name returns this quoted
+        table = fts_table_name(tenant)
+        conn.execute(f"DROP TABLE IF EXISTS {table}")
+        # Shadow tables are dropped explicitly: DROP TABLE on the virtual table
+        # removes only the table itself, and a later CREATE VIRTUAL TABLE with
+        # the same name fails on the orphans — which is how a home reaching v6
+        # with a leftover index becomes unopenable rather than merely stale.
+        #
+        # Written out one statement per suffix rather than looped, so every
+        # identifier spliced into SQL is literal at the point of use and the
+        # AST splice guard (SEC-A3-10) can verify each one. A typo here would
+        # otherwise orphan a shadow table silently.
+        conn.execute(f'DROP TABLE IF EXISTS "{bare}_content"')
+        conn.execute(f'DROP TABLE IF EXISTS "{bare}_data"')
+        conn.execute(f'DROP TABLE IF EXISTS "{bare}_idx"')
+        conn.execute(f'DROP TABLE IF EXISTS "{bare}_docsize"')
+        conn.execute(f'DROP TABLE IF EXISTS "{bare}_config"')
+        conn.execute(
+            f"CREATE VIRTUAL TABLE {table} USING fts5("
+            f"content, tokenize='porter unicode61')"
+        )
+        conn.execute(
+            f"INSERT INTO {table}(rowid, content) "
+            f"SELECT id, content FROM memories WHERE tenant_id = ?",
+            (tenant,),
+        )
+        conn.execute(
+            "INSERT INTO meta(key, value) VALUES (?, '1') "
+            "ON CONFLICT(key) DO NOTHING",
+            (f"tenant_fts:{tenant}",),
+        )
+
+
+def _verify_per_tenant_fts(conn: sqlite3.Connection) -> None:
+    """Never publish v6 with a tenant's postings missing or short.
+
+    Same contract as the v2 and v4 postconditions: the version bump is the
+    moment the schema is declared good, so it must not happen until every
+    tenant with rows has a table holding exactly those rows.
+    """
+    from .tenant_schema import fts_table_name
+
+    for tenant, expected in conn.execute(
+        "SELECT tenant_id, COUNT(*) FROM memories GROUP BY tenant_id"
+    ):
+        table = fts_table_name(tenant)
+        try:
+            actual = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+        except sqlite3.OperationalError as exc:
+            raise DbError(
+                f"v6 schema missing FTS table for tenant {tenant!r}: {exc}"
+            ) from exc
+        if actual != expected:
+            raise DbError(
+                f"v6 FTS table for tenant {tenant!r} holds {actual} rows, "
+                f"expected {expected}"
+            )
+        marker = conn.execute(
+            "SELECT 1 FROM meta WHERE key = ?", (f"tenant_fts:{tenant}",)
+        ).fetchone()
+        if marker is None:
+            raise DbError(f"v6 schema missing tenant_fts marker for {tenant!r}")
+
+    # The whole point: the shared table must be gone, or two lexical indexes
+    # exist and only one is written.
+    if conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE name = 'memory_fts'"
+    ).fetchone() is not None:
+        raise DbError("v6 schema still contains the shared memory_fts table")
+
+
 MIGRATIONS: list[tuple[int, str]] = [
     (1, _MIGRATION_1), (2, _MIGRATION_2), (3, _MIGRATION_3), (4, _MIGRATION_4),
-    (5, _MIGRATION_5),
+    (5, _MIGRATION_5), (6, _MIGRATION_6),
 ]
 
 
@@ -131,7 +252,11 @@ def connect(home: Path) -> sqlite3.Connection:
         conn.execute("PRAGMA secure_delete=ON")
         _migrate(conn)
         try:
-            conn.execute("SELECT 1 FROM memory_fts LIMIT 0").fetchone()
+            # Probe FTS5 support against a throwaway table: the shipped indexes
+            # are per-tenant (v6) and there may be no tenant yet on a fresh
+            # home, so `memory_fts` no longer exists to probe.
+            conn.execute("CREATE VIRTUAL TABLE _fts5_probe USING fts5(content)")
+            conn.execute("DROP TABLE _fts5_probe")
         except sqlite3.OperationalError as exc:
             raise DbError(f"FTS5 is not available in this SQLite build: {exc}") from exc
         return conn
@@ -187,6 +312,13 @@ def _migrate(conn: sqlite3.Connection) -> None:
                     raise DbError("v4 schema missing tenant_id on memories")
                 if "tenant_id" not in qry_cols:
                     raise DbError("v4 schema missing tenant_id on queries")
+            elif version == 6:
+                # Per-tenant FTS needs a runtime table name per tenant, so the
+                # data movement is Python rather than a DDL string. It runs
+                # inside this transaction: parameterized inserts between the
+                # BEGIN executescript opened and the commit below are part of it.
+                _populate_per_tenant_fts(conn)
+                _verify_per_tenant_fts(conn)
             conn.execute(f"PRAGMA user_version = {version}")
             conn.commit()
         except (sqlite3.Error, DbError) as exc:

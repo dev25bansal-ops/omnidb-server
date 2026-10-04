@@ -24,6 +24,12 @@ if TYPE_CHECKING:
 
 _KINDS = ("episodic", "semantic", "procedural")
 _SELECTIVE = "deleted_ms IS NULL AND superseded_by IS NULL"
+
+# The FTS5 tokenizer for per-tenant tables. Identical to the tokenizer the
+# shared `memory_fts` used, and to `tenant_schema._TOKENIZER`: changing it
+# would re-tokenize the corpus and change every lexical score, so the three must
+# move together or not at all.
+_TENANT_FTS_TOKENIZER = "porter unicode61"
 _SQL_FIRST_WORD = re.compile(r"^\s*([a-zA-Z]+)")
 _CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
@@ -618,10 +624,19 @@ class MemoryStore:
             # ADR-08 / W3-3: FTS sync is in-transaction, exactly as the removed
             # triggers did. A crash between this and the commit cannot leave FTS
             # and rows divergent, because they commit together.
-            for mid, content in zip(new_ids, contents):
-                self.conn.execute(
-                    "INSERT INTO memory_fts(rowid, content) VALUES (?, ?)",
-                    (int(mid), content),
+            #
+            # Grouped by tenant because a batch may interleave them, and each
+            # group goes to that tenant's own table. Resolving the table per
+            # row would re-check the marker N times; grouping does it once per
+            # distinct tenant and keeps the statement count proportional to
+            # tenants rather than rows.
+            by_tenant: dict[str, list[tuple[int, str]]] = {}
+            for mid, content, tenant in zip(new_ids, contents, tenants):
+                by_tenant.setdefault(tenant, []).append((int(mid), content))
+            for tenant, postings in by_tenant.items():
+                table = self._fts_table(tenant)
+                self.conn.executemany(
+                    f"INSERT INTO {table}(rowid, content) VALUES (?, ?)", postings
                 )
             self.conn.commit()
         except sqlite3.Error as exc:
@@ -702,12 +717,16 @@ class MemoryStore:
                 )
                 # ADR-08 / W3-3: replace the FTS posting in the same
                 # transaction, matching what the removed `memories_au` trigger
-                # did (delete old content, insert new).
+                # did (delete old content, insert new). Both halves target the
+                # row's own tenant table, resolved from the row that was just
+                # updated — not from the caller's argument, so the posting can
+                # never land in a table other than the row's owner.
+                table = self._fts_table(tenant)
                 self.conn.execute(
-                    "DELETE FROM memory_fts WHERE rowid = ?", (int(memory_id),)
+                    f"DELETE FROM {table} WHERE rowid = ?", (int(memory_id),)
                 )
                 self.conn.execute(
-                    "INSERT INTO memory_fts(rowid, content) VALUES (?, ?)",
+                    f"INSERT INTO {table}(rowid, content) VALUES (?, ?)",
                     (int(memory_id), new_content),
                 )
             self.conn.commit()
@@ -1025,12 +1044,20 @@ class MemoryStore:
 
     @_serialized
     def check(self) -> dict:
+        # ADR-08 / W3-3: one integrity check per tenant table. A single check
+        # against one shared table no longer covers the corpus, and a broken
+        # tenant's index must be named rather than summarised away — so the
+        # first failure is reported with the tenant it belongs to.
+        fts_integrity = "ok"
         try:
-            self.conn.execute(
-                "INSERT INTO memory_fts(memory_fts) VALUES('integrity-check')"
-            )
+            from .tenant_schema import list_registered
+
+            for tenant in list_registered(self.conn):
+                table = self._fts_table(tenant)
+                self.conn.execute(
+                    f"INSERT INTO {table}({table}) VALUES('integrity-check')"
+                )
             self.conn.commit()
-            fts_integrity = "ok"
         except sqlite3.DatabaseError as exc:
             self.conn.rollback()
             fts_integrity = str(exc)
@@ -1078,6 +1105,10 @@ class MemoryStore:
             # all — the placeholder list was built unbounded, so the statement
             # raised and the operator had no way to reclaim the space.
             batch = self._id_batch()
+            # ADR-08 / W3-3: purge is already tenant-scoped, so every id in
+            # `ids` belongs to the one tenant and one table resolves for the
+            # whole batch — no per-chunk lookup.
+            fts = self._fts_table(tenant)
             for part in _id_chunks(ids, batch):
                 ph = ",".join("?" * len(part))
                 self.conn.execute(
@@ -1087,7 +1118,7 @@ class MemoryStore:
                 # ADR-08 / W3-3: drop the FTS postings in the same transaction,
                 # matching what the removed `memories_ad` trigger did.
                 self.conn.execute(
-                    f"DELETE FROM memory_fts WHERE rowid IN ({ph})", part
+                    f"DELETE FROM {fts} WHERE rowid IN ({ph})", part
                 )
                 cur = self.conn.execute(
                     f"DELETE FROM memories WHERE id IN ({ph})", part
@@ -1384,19 +1415,38 @@ class MemoryStore:
                 "by_kind": by_kind, "top_queries": top_queries}
 
     @_serialized
-    def schema(self) -> dict:
+    def schema(self, tenant: str = "default") -> dict:
         """Introspection for the `search` escape hatch (E-06): tables, notes,
         and example queries. Every example is a statement the read-only
-        authorizer actually accepts, so agents can copy-run them."""
-        tables = [
+        authorizer actually accepts, so agents can copy-run them.
+
+        Takes a tenant because after ADR-08 W3-3 the lexical index is per-tenant,
+        so the example that names it is only valid for the tenant asked about."""
+        rows = [
             {"name": str(r["name"]), "sql": str(r["sql"])}
             for r in self.conn.execute(
                 "SELECT name, sql FROM sqlite_master "
-                "WHERE type = 'table' AND name NOT LIKE 'sqlite_%' "
-                "AND name NOT LIKE 'memory_fts_%' ORDER BY name"
+                "WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
             )
         ]
+        # ADR-08 / W3-3: drop the per-tenant FTS *shadow* tables
+        # (`fts_default_content`, `_data`, `_idx`, `_docsize`, `_config`) while
+        # keeping the real `fts_<tenant>` index. A name pattern cannot do this:
+        # the tenant charset includes `_`, so a tenant named `acme_prod` is
+        # shaped exactly like a shadow table. The DDL is the discriminator —
+        # only a real index carries CREATE VIRTUAL TABLE.
+        tables = [
+            t for t in rows
+            if not t["name"].startswith("fts_")
+            or "CREATE VIRTUAL TABLE" in (t["sql"] or "")
+        ]
         live = "deleted_ms IS NULL AND superseded_by IS NULL"
+        # ADR-08 / W3-3: there is no longer one `memory_fts`. `schema()` feeds
+        # the `search` escape hatch, so its notes and examples must name a table
+        # that actually exists — the caller's own tenant's — or every copy-runnable
+        # example is a syntax error against the shipped schema.
+        fts = self._fts_table(tenant)
+        fts_bare = fts.strip('"')
         return {
             "schema_version": SCHEMA_VERSION,
             "tables": tables,
@@ -1407,9 +1457,11 @@ class MemoryStore:
                     f"delete via deleted_ms, supersession via superseded_by; "
                     f"live rows satisfy: {live}"
                 ),
-                "memory_fts": (
-                    "FTS5 index over memories.content (porter unicode61); "
-                    "query with memory_fts MATCH ?"
+                fts_bare: (
+                    f"FTS5 index over memories.content for tenant {tenant!r} "
+                    f"(porter unicode61); query with {fts_bare} MATCH ?. Each "
+                    "tenant has its own index, so bm25 is scored within one "
+                    "tenant's corpus."
                 ),
                 "edges": (
                     "graph links between memory ids; PK (src, dst, label); "
@@ -1425,8 +1477,8 @@ class MemoryStore:
                 f"SELECT id, kind, substr(content, 1, 80) AS preview FROM memories "
                 f"WHERE {live} ORDER BY created_ms DESC LIMIT 10",
                 f"SELECT kind, COUNT(*) AS n FROM memories WHERE {live} GROUP BY kind",
-                "SELECT rowid, bm25(memory_fts) AS rank FROM memory_fts "
-                "WHERE memory_fts MATCH 'query' ORDER BY rank LIMIT 10",
+                f"SELECT rowid, bm25({fts_bare}) AS rank FROM {fts_bare} "
+                f"WHERE {fts_bare} MATCH 'query' ORDER BY rank LIMIT 10",
                 "SELECT e.src, e.dst, e.label FROM edges e LIMIT 20",
                 "SELECT key, value FROM meta LIMIT 20",
                 "SELECT kind, COUNT(*) AS n, AVG(took_ms) AS avg_ms FROM queries "
@@ -1436,6 +1488,45 @@ class MemoryStore:
 
     def _home(self) -> Path:
         return Path(self.conn.execute("PRAGMA database_list").fetchone()[2]).parent
+
+    def _fts_table(self, tenant: str) -> str:
+        """The quoted FTS table name for `tenant`, created on demand.
+
+        Every FTS site routes through here rather than naming a table itself.
+        Two reasons this is one method rather than a lookup at each call site:
+
+        - **Fail-closed.** A tenant with no registration gets its table created
+          before the statement runs, so a write can never land in a table nobody
+          reads and a read can never hit a missing table.
+        - **Fail-safe on identifiers.** The name is derived by
+          `tenant_schema.fts_table_name`, which validates the tenant first, so
+          the runtime table name in the SQL that follows cannot carry a quote or
+          a path separator (ADR-08's identifier-safety rule).
+
+        Deliberately NOT `tenant_schema.register_and_create`: that opens its own
+        transaction and commits, which would end the caller's transaction in the
+        middle of a batch write — the marker row would be committed while the
+        row that triggered it rolled back. Here the caller holds `self._op_lock`
+        (every public method is `@_serialized`), so the check-then-create is
+        atomic against other store operations, and the create joins the caller's
+        transaction so marker and table land together.
+        """
+        from .tenant_schema import fts_table_name
+
+        table = fts_table_name(tenant)
+        if self.conn.execute(
+            "SELECT 1 FROM meta WHERE key = ?", (f"tenant_fts:{tenant}",)
+        ).fetchone() is None:
+            self.conn.execute(
+                f"CREATE VIRTUAL TABLE IF NOT EXISTS {table} USING fts5("
+                f"content, tokenize='{_TENANT_FTS_TOKENIZER}')"
+            )
+            self.conn.execute(
+                "INSERT INTO meta(key, value) VALUES (?, '1') "
+                "ON CONFLICT(key) DO NOTHING",
+                (f"tenant_fts:{tenant}",),
+            )
+        return table
 
     @_serialized
     def close(self) -> None:

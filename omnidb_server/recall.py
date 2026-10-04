@@ -111,14 +111,26 @@ def run_recall(store, query: str, k: int, kind, k_fetch,
     match_expr = fts_match_query(query)
     sparse_ids: list[int] = []
     if match_expr:
+        # ADR-08 / W3-3: the lexical leg queries the *tenant's own* FTS table,
+        # so bm25 derives IDF from that tenant's corpus alone. On the shared
+        # table every tenant's document frequencies reweighted every other
+        # tenant's rare terms — measured: one tenant's score for a term moved
+        # from -1e-06 to -1.256e-06 when an unrelated tenant added 400 rows
+        # containing it, with this tenant's own data untouched.
+        #
+        # The `m.tenant_id = ?` fence below stays. It is now redundant against
+        # a per-tenant table, and that is the point: it also excludes
+        # soft-deleted and superseded rows via `_SELECTIVE`, which table
+        # separation does not do.
+        fts = store._fts_table(tenant)
         rows = store.conn.execute(
-            "SELECT f.rowid FROM memory_fts f "
+            f"SELECT f.rowid FROM {fts} f "
             "JOIN memories m ON m.id = f.rowid "
-            f"WHERE memory_fts MATCH ? AND m.{_SELECTIVE} "
+            f"WHERE {fts} MATCH ? AND m.{_SELECTIVE} "
             + tenant_cond +
             "AND (? IS NULL OR m.kind = ?) "
             + agent_cond +
-            "ORDER BY bm25(memory_fts) LIMIT ?",
+            f"ORDER BY bm25({fts}) LIMIT ?",
             (match_expr, tenant, kind, kind, *agent_params, fetch),
         ).fetchall()
         sparse_ids = [int(r["rowid"]) for r in rows]

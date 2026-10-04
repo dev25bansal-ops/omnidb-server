@@ -75,7 +75,8 @@ def test_normal_v1_upgrade_adds_both_columns(tmp_path):
     assert conn.execute("PRAGMA user_version").fetchone()[0] == dbmod.SCHEMA_VERSION
     # the pre-migration row survived and FTS stayed synced via the v1 triggers
     hit = conn.execute(
-        "SELECT rowid FROM memory_fts WHERE memory_fts MATCH 'fixture'"
+        'SELECT rowid FROM "fts_default" WHERE "fts_default" MATCH ?',
+        ("fixture",),
     ).fetchone()
     assert hit is not None and hit[0] == 4
     conn.close()

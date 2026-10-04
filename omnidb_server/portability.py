@@ -549,9 +549,12 @@ def import_jsonl(store, path: str | Path, *,
                 ),
             )
             # ADR-08 / W3-3: import writes memories directly, so it must sync
-            # FTS itself — the triggers that used to do this are gone.
+            # FTS itself — the triggers that used to do this are gone. The
+            # target is the restoring tenant's own table (schema v6), so a
+            # restored home's lexical index matches its tenant column rather
+            # than landing in a shared table that no longer exists.
             store.conn.execute(
-                "INSERT INTO memory_fts(rowid, content) VALUES (?, ?)",
+                f"INSERT INTO {store._fts_table(tenant)}(rowid, content) VALUES (?, ?)",
                 (mid, content),
             )
         applied_edges = 0

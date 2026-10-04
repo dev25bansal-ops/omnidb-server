@@ -96,7 +96,9 @@ def attach_tools(mcp, store, tenant_resolver=None, *, unscoped_search=False):
     @mcp.tool()
     async def schema() -> dict:
         """Introspect the `search` surface: tables, column notes, and copy-runnable example queries."""
-        return await _call(store.schema)
+        # Tenant-scoped (ADR-08 / W3-3): the lexical index is per-tenant, so the
+        # example that names it must name the caller's own table.
+        return await _call(store.schema, tenant=resolve_tenant())
 
     @mcp.tool()
     async def related(memory_id: int, max_hops: int = 2,

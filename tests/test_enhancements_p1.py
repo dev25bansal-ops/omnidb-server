@@ -24,12 +24,21 @@ from omnidb_server.vector_index import BruteForceIndex
 # --- E-06: schema() introspection -------------------------------------------------
 
 def test_schema_reports_tables_and_examples_run(store):
+    # A tenant's FTS table is created on first write (ADR-08 / W3-3), so the
+    # report has something to name only once there is a row to index.
+    store.remember("a note so the lexical index exists")
     payload = store.schema()
     names = {t["name"] for t in payload["tables"]}
-    assert {"memories", "edges", "meta", "queries", "memory_fts"} <= names
-    assert not any(name.startswith("memory_fts_") for name in names), \
+    # The shared `memory_fts` is gone; the lexical index is per-tenant, so the
+    # report names the caller's own table instead.
+    assert {"memories", "edges", "meta", "queries", "fts_default"} <= names
+    assert "memory_fts" not in names, \
+        "the shared table was dropped in v6; schema() must not advertise it"
+    assert not any(name.startswith("fts_default_") for name in names), \
         "FTS shadow tables must not clutter the report"
     assert payload["schema_version"] == dbmod.SCHEMA_VERSION
+    assert "fts_default" in payload["notes"], \
+        "the per-tenant index must be described, or its example is unexplainable"
     # every advertised example must actually run under the read-only authorizer
     for sql in payload["examples"]:
         result = store.search(sql, unscoped=True)

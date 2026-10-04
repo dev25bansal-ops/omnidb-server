@@ -68,7 +68,8 @@ def test_purge_actually_removes_the_row_and_fts_posting(purged_home):
         # a hyphenated token is FTS5 syntax (NOT / OR / AND), so match a
         # plain word from the same content instead
         assert conn.execute(
-            "SELECT COUNT(*) FROM memory_fts WHERE memory_fts MATCH ?", ("payload",)
+            'SELECT COUNT(*) FROM "fts_default" WHERE "fts_default" MATCH ?',
+            ("payload",),
         ).fetchone()[0] == 0
     finally:
         conn.close()

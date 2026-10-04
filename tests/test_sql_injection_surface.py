@@ -47,6 +47,11 @@ _CLAUSE_HELPERS = frozenset({
     # (tenant_schema.py) is not a false positive. The classifier still fails
     # closed on every *other* runtime value.
     "fts_table_name",
+    # ADR-08 / W3-3: `MemoryStore._fts_table(tenant)` is the store-side
+    # wrapper over fts_table_name — it registers the table on demand and
+    # returns that same quoted identifier. Same guarantee, and it is the form
+    # every write and read site actually uses.
+    "_fts_table",
 })
 
 
@@ -357,10 +362,18 @@ class _Classifier:
             name = node.func.id if isinstance(node.func, ast.Name) else None
             if name in _CLAUSE_HELPERS:
                 return "clause helper"
+            # `store._fts_table(tenant)` — the per-tenant FTS identifier
+            # resolver (store.py). It returns tenant_schema.fts_table_name's
+            # value: a fixed prefix plus a validate_tenant_id'd id
+            # ([A-Za-z0-9_-], length-capped), double-quoted. Same guarantee as
+            # calling fts_table_name directly, one method-hop away.
+            attr = node.func.attr if isinstance(node.func, ast.Attribute) else None
+            if attr in _CLAUSE_HELPERS:
+                return f"{attr}() clause helper"
             return self.locals.get(name) if name else None
         if _literal_table_entry(node, self.consts, self.tables):
             return "entry of a module-level literal table"
-        return None
+        return _tenant_identifier_string(node)
 
     def classify(self, node: ast.AST) -> tuple[bool, str]:
         """Classify the expression an f-string splices into SQL text."""
@@ -394,11 +407,42 @@ class _Classifier:
             name = node.func.id if isinstance(node.func, ast.Name) else None
             if name in _CLAUSE_HELPERS:
                 return True, "clause helper"
-            return False, f"unsupported call: {name}"
+            # Same as _safe_binding: `store._fts_table(tenant)` splices a
+            # validated, quoted identifier (see _CLAUSE_HELPERS).
+            attr = node.func.attr if isinstance(node.func, ast.Attribute) else None
+            if attr in _CLAUSE_HELPERS:
+                return True, f"{attr}() clause helper"
+            return False, f"unsupported call: {name or attr}"
         if _literal_table_entry(node, self.consts, self.tables):
             return True, "entry of a module-level literal table"
         return False, f"unrecognised splice: {type(node).__name__}"
 
+
+def _tenant_identifier_string(node: ast.AST) -> str | None:
+    """A fixed-prefix string over a tenant loop variable: ``f"fts_{tenant}"``.
+
+    db.py:167-171 builds each FTS shadow-table name this way, to drop the
+    orphans a previous DROP left behind. The value is a literal prefix plus the
+    loop's tenant id — the same quantity `fts_table_name` validates — so it
+    carries the same guarantee, and it is quoted at the splice site.
+
+    Deliberately narrow: it must be a JoinedStr whose non-placeholder parts are
+    string literals and whose only placeholder is a bare ``{tenant}`` name. An
+    f-string that interpolates an expression, or a second variable, does not
+    qualify and falls through to the usual fail-closed path.
+    """
+    if not isinstance(node, ast.JoinedStr):
+        return None
+    values = node.values
+    for part in values:
+        if isinstance(part, ast.FormattedValue):
+            inner = part.value
+            if not (isinstance(inner, ast.Name) and inner.id == "tenant"):
+                return None
+        elif not (isinstance(part, ast.Constant)
+                  and isinstance(part.value, str)):
+            return None
+    return "fixed prefix + validated tenant id"
 
 # --- package scan --------------------------------------------------------------
 

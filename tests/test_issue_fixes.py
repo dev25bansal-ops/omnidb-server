@@ -172,7 +172,10 @@ def test_update_memory_reindexes_content(store):
 
     hits = store.recall("beta totally different", k=3)
     assert hits and hits[0]["id"] == mid
-    old = store.search("SELECT COUNT(*) AS n FROM memory_fts WHERE memory_fts MATCH 'initial'", unscoped=True)
+    old = store.search(
+        "SELECT COUNT(*) AS n FROM \"fts_default\" "
+        "WHERE \"fts_default\" MATCH 'initial'",
+        unscoped=True)  # the index is per-tenant since v6
     assert old["rows"][0][0] == 0  # FTS trigger kept in sync
 
     merged = store.update_memory(mid, metadata={"tag": "x"})

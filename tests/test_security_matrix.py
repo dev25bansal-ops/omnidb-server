@@ -55,7 +55,10 @@ _ALLOW_CASES = [
     pytest.param("SELECT 1", [[1]], id="constant_select"),
     pytest.param("SELECT * FROM memories LIMIT 1", None, id="memory_table_select"),
     pytest.param(
-        "SELECT rowid FROM memory_fts WHERE memory_fts MATCH 'alpha'", [[1]],
+        # search() takes raw SQL with no bound parameters, so the MATCH term is
+        # inlined. The table is the default tenant's index (schema v6).
+        "SELECT rowid FROM \"fts_default\" WHERE \"fts_default\" MATCH 'alpha'",
+        [[1]],
         id="fts_match_query",
     ),
     pytest.param("SELECT * FROM pragma_data_version", None, id="pragma_data_version_via_tvf"),
@@ -86,7 +89,9 @@ def test_pragma_data_version_allowance_scope(store):
     # read-only surface for it is the equivalent table-valued form below, which
     # must yield exactly one row.
     store.remember("alpha beta gamma payload")
-    matched = store.search("SELECT rowid FROM memory_fts WHERE memory_fts MATCH 'alpha'", unscoped=True)
+    matched = store.search(
+        "SELECT rowid FROM \"fts_default\" WHERE \"fts_default\" MATCH 'alpha'",
+        unscoped=True)
     assert matched["rows"] == [[1]]
     out = store.search("SELECT * FROM pragma_data_version", unscoped=True)
     assert out["columns"] == ["data_version"]

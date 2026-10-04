@@ -1,26 +1,27 @@
 """Per-tenant FTS5 table lifecycle (ADR-08, storage-design appendix).
 
-## NOT WIRED IN — read this before importing
+## Wired in as of schema v6
 
-**Nothing in the shipped read or write path calls this module.** The lexical leg
-still queries the single global `memory_fts` table, fenced by a `tenant_id`
-predicate on the joined `memories` row (`recall.py`) rather than by separate
-tables. This module is the *designed* mechanism, built and unit-tested, awaiting
-the W3-3 migration (audit finding C14).
+`MemoryStore._fts_table(tenant)` calls into this module on every FTS write and
+read, so the lifecycle below is what the server actually does: each tenant gets
+`fts_<tenant>`, created on first use and populated from that tenant's rows by the
+v6 migration. `docs/adr/ADR-08-multi-tenant-rebuild.md` has the design;
+`docs/adr/ADR-08-w3-progress.md` its status.
 
-That distinction matters because external-content FTS5 **cannot** be filtered
-per tenant — which is why this module exists — so the current predicate fence is
-the shipped behaviour and this is not. Do not read the code below as a
-description of what the server does today; read it as what it will do after
-W3-3, and read `docs/adr/ADR-08-multi-tenant-rebuild.md` for the migration plan
-and `docs/adr/ADR-08-w3-progress.md` for its status.
+The store deliberately does *not* call `register_and_create` — that opens and
+commits its own transaction, which would end a batch write partway through. It
+inlines the same CREATE plus marker under `self._op_lock`, so the atomicity this
+module documents still holds, provided by the caller's transaction instead.
 
 ## Why this exists
 
-The single `memory_fts` table is an **external-content** FTS5 table bound to the
-whole `memories` table (`db.py:31`). External-content tables cannot be filtered
-per tenant, so lexical isolation requires **one standalone FTS table per
-tenant**, synchronised explicitly in the store's write path.
+The original single `memory_fts` table was bound to the whole `memories` table
+and could only be narrowed with a `tenant_id` predicate on the joined row. That
+fence worked, but `bm25()` still derived its IDF from every tenant's rows, so
+one tenant's document frequencies reweighted another's rare terms — measured: a
+tenant's score for a term moved from -1e-06 to -1.256e-06 after an unrelated
+tenant added 400 rows containing it. One standalone FTS5 table per tenant makes
+the lexical ranking tenant-local and the isolation structural.
 
 This module owns the *lifecycle* of those tables — create on first use, drop on
 teardown — and the crash-safety contract that a half-created tenant can never
@@ -55,8 +56,11 @@ import sqlite3
 
 from .tenancy import TenantError, validate_tenant_id
 
-# The FTS5 tokenizer the single-table `memory_fts` used — kept identical so a
-# query behaves the same before and after the split.
+# The FTS5 tokenizer. Kept identical to the one the shared `memory_fts` used,
+# so a query behaves the same before and after the v6 split — and identical to
+# `store._TENANT_FTS_TOKENIZER` and `db._MIGRATION_6`'s DDL, because changing it
+# re-tokenizes the corpus and changes every lexical score. All three move
+# together or not at all.
 _TOKENIZER = "porter unicode61"
 
 _FTS_PREFIX = "fts_"
