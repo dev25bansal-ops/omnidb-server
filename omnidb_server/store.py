@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Iterator
 from .config import Config
 from .db import SCHEMA_VERSION, get_meta, set_meta
 from .embeddings import Embedder
-from .tenancy import validate_tenant_id
+from .tenancy import DEFAULT_TENANT, validate_tenant_id
 from .validation import validate_content, validate_trigger_patterns
 
 if TYPE_CHECKING:
@@ -1163,6 +1163,14 @@ class MemoryStore:
 
     @_serialized
     def stats(self, tenant: str = "default") -> dict:
+        """Tenant-scoped database statistics.
+
+        Every count in this payload is fenced by `tenant`. `edges` is counted
+        through its source memory because the table has no `tenant_id` column,
+        and `files` lists only the database artefacts rather than the whole home
+        (audit C7) — a home-wide listing disclosed `tenants.json` and per-file
+        sizes, which vary with other tenants' activity.
+        """
         t0 = time.perf_counter()
         # ADR-08: every tenant-scoped count is fenced — the audit's MT-02
         # bypass exposed `agents` (and, by the same shape, `live`/`by_kind`) to
@@ -1189,18 +1197,41 @@ class MemoryStore:
                 (tenant,),
             )
         }
-        files = {
-            p.name: p.stat().st_size
-            for p in sorted(self._home().iterdir())
-            if p.is_file()
-        }
+        # `edges` has no tenant_id column (db.py:_MIGRATION_1) — migration 4 adds
+        # one to memories and queries only. Counting it directly therefore
+        # returned the whole home's total to every tenant, which is why this
+        # counts through the src memory instead of assuming a fence that the
+        # schema cannot express (audit C7).
+        edges = self.conn.execute(
+            "SELECT COUNT(*) FROM edges e "
+            "JOIN memories m ON m.id = e.src "
+            "WHERE m.tenant_id = ?",
+            (tenant,),
+        ).fetchone()[0]
+        # A home-wide listing disclosed tenants.json, the lock file and per-file
+        # sizes — all of which vary with another tenant's activity (audit C7).
+        # Scoped tenants get only the database artefacts, which are deployment
+        # facts; the single-tenant caller owns the whole home, so it still gets
+        # the sidecars an operator needs for disk accounting (I-05).
+        if tenant == DEFAULT_TENANT:
+            files = {
+                p.name: p.stat().st_size
+                for p in sorted(self._home().iterdir())
+                if p.is_file()
+            }
+        else:
+            files = {
+                p.name: p.stat().st_size
+                for p in sorted(self._home().iterdir())
+                if p.is_file() and p.name.startswith("omnidb.db")
+            }
         payload = {
             "tenant": tenant,
             "live": sum(kinds.values()),
             "by_kind": kinds,
             "soft_deleted": deleted,
             "agents": agents,
-            "edges": self.conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0],
+            "edges": edges,
             "embedder": {"name": self.embedder.name, "dim": self.embedder.dim},
             "index": {
                 "kind": self.index.kind,
