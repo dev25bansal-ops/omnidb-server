@@ -68,7 +68,15 @@ def test_stdio_is_the_default_resolver():
 def test_attach_tools_registers_the_whole_surface(store):
     mcp = _FakeMCP()
     attach_tools(mcp, store)
-    assert len(mcp.tools) == 10, "the shared surface must stay whole"
+
+    # A named set rather than a bare count: the old `len(...) == 10` stopped
+    # detecting an accidental removal the moment the surface legitimately grew
+    # (the unified `query` tool did exactly that). A named set catches both an
+    # addition and a removal, and the eleven names are legible.
+    assert {t for t in mcp.tools.keys()} == {
+        "remember", "recall", "search", "schema", "related", "update_memory",
+        "forget", "forget_many", "consolidate", "stats", "query",
+    }, "the shared surface drifted"
 
 
 @pytest.mark.parametrize("tool", ["stats", "remember", "recall", "search"])

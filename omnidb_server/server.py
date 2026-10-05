@@ -84,6 +84,22 @@ def attach_tools(mcp, store, tenant_resolver=None, *, unscoped_search=False):
                            tenant=resolve_tenant())
 
     @mcp.tool()
+    async def query(spec: dict, k: int = 5) -> list[dict]:
+        """One ranked result from ALL capabilities: text match + vector match + graph traversal.
+
+        spec keys: text (lexical+vector query), graph_from (a memory id to start
+        traversing from), kind, agent_id, max_hops, filter_metadata (exact
+        metadata equality), min_score. Tenant is set by the server, never by the
+        caller; a spec containing a `tenant` key is rejected.
+
+        Returns one list ranked by score, each row carrying `sources` naming the
+        contributing legs.
+        """
+        # Tenant comes from the resolver, exactly as recall's does. No tenant
+        # key can arrive through the spec because MemoryStore.query rejects it.
+        return await _call(store.query, spec, k=k, tenant=resolve_tenant())
+
+    @mcp.tool()
     async def search(sql: str) -> dict:
         """Run a read-only SELECT/WITH statement against SQLite (tables: memories, edges, meta)."""
         # `unscoped_search` is a transport capability, not a tenant name: only a
