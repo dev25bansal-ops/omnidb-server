@@ -1,0 +1,196 @@
+{
+  "cells": [
+    {
+      "weight": 0.0,
+      "decay": 0.3,
+      "budget": 256,
+      "added": 0,
+      "added_good": 0,
+      "precision_of_additions": null
+    },
+    {
+      "weight": 0.0,
+      "decay": 0.3,
+      "budget": 1024,
+      "added": 0,
+      "added_good": 0,
+      "precision_of_additions": null
+    },
+    {
+      "weight": 0.0,
+      "decay": 0.5,
+      "budget": 256,
+      "added": 0,
+      "added_good": 0,
+      "precision_of_additions": null
+    },
+    {
+      "weight": 0.0,
+      "decay": 0.5,
+      "budget": 1024,
+      "added": 0,
+      "added_good": 0,
+      "precision_of_additions": null
+    },
+    {
+      "weight": 0.0,
+      "decay": 0.7,
+      "budget": 256,
+      "added": 0,
+      "added_good": 0,
+      "precision_of_additions": null
+    },
+    {
+      "weight": 0.0,
+      "decay": 0.7,
+      "budget": 1024,
+      "added": 0,
+      "added_good": 0,
+      "precision_of_additions": null
+    },
+    {
+      "weight": 0.05,
+      "decay": 0.3,
+      "budget": 256,
+      "added": 0,
+      "added_good": 0,
+      "precision_of_additions": null
+    },
+    {
+      "weight": 0.05,
+      "decay": 0.3,
+      "budget": 1024,
+      "added": 0,
+      "added_good": 0,
+      "precision_of_additions": null
+    },
+    {
+      "weight": 0.05,
+      "decay": 0.5,
+      "budget": 256,
+      "added": 0,
+      "added_good": 0,
+      "precision_of_additions": null
+    },
+    {
+      "weight": 0.05,
+      "decay": 0.5,
+      "budget": 1024,
+      "added": 0,
+      "added_good": 0,
+      "precision_of_additions": null
+    },
+    {
+      "weight": 0.05,
+      "decay": 0.7,
+      "budget": 256,
+      "added": 0,
+      "added_good": 0,
+      "precision_of_additions": null
+    },
+    {
+      "weight": 0.05,
+      "decay": 0.7,
+      "budget": 1024,
+      "added": 0,
+      "added_good": 0,
+      "precision_of_additions": null
+    },
+    {
+      "weight": 0.1,
+      "decay": 0.3,
+      "budget": 256,
+      "added": 1,
+      "added_good": 0,
+      "precision_of_additions": 0.0
+    },
+    {
+      "weight": 0.1,
+      "decay": 0.3,
+      "budget": 1024,
+      "added": 1,
+      "added_good": 0,
+      "precision_of_additions": 0.0
+    },
+    {
+      "weight": 0.1,
+      "decay": 0.5,
+      "budget": 256,
+      "added": 1,
+      "added_good": 0,
+      "precision_of_additions": 0.0
+    },
+    {
+      "weight": 0.1,
+      "decay": 0.5,
+      "budget": 1024,
+      "added": 1,
+      "added_good": 0,
+      "precision_of_additions": 0.0
+    },
+    {
+      "weight": 0.1,
+      "decay": 0.7,
+      "budget": 256,
+      "added": 1,
+      "added_good": 0,
+      "precision_of_additions": 0.0
+    },
+    {
+      "weight": 0.1,
+      "decay": 0.7,
+      "budget": 1024,
+      "added": 1,
+      "added_good": 0,
+      "precision_of_additions": 0.0
+    },
+    {
+      "weight": 0.3,
+      "decay": 0.3,
+      "budget": 256,
+      "added": 8,
+      "added_good": 7,
+      "precision_of_additions": 0.875
+    },
+    {
+      "weight": 0.3,
+      "decay": 0.3,
+      "budget": 1024,
+      "added": 8,
+      "added_good": 7,
+      "precision_of_additions": 0.875
+    },
+    {
+      "weight": 0.3,
+      "decay": 0.5,
+      "budget": 256,
+      "added": 8,
+      "added_good": 7,
+      "precision_of_additions": 0.875
+    },
+    {
+      "weight": 0.3,
+      "decay": 0.5,
+      "budget": 1024,
+      "added": 8,
+      "added_good": 7,
+      "precision_of_additions": 0.875
+    },
+    {
+      "weight": 0.3,
+      "decay": 0.7,
+      "budget": 256,
+      "added": 8,
+      "added_good": 7,
+      "precision_of_additions": 0.875
+    },
+    {
+      "weight": 0.3,
+      "decay": 0.7,
+      "budget": 1024,
+      "added": 8,
+      "added_good": 7,
+      "precision_of_additions": 0.875
+    }
+  ]
+}
