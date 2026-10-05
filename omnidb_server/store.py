@@ -50,6 +50,14 @@ _RECONCILE_BATCH_CAP = 500
 _ID_BATCH_CAP = 500
 _ID_BIND_RESERVE = 4
 
+# Graph-leg caps (ADR-08 / W3-3). Safety caps, not tuning knobs, so they are
+# module constants the way _RECONCILE_BATCH_CAP is; the operator-facing knobs
+# live on Config.
+_GRAPH_MAX_DEPTH = 4          # config default 2
+_GRAPH_MAX_BUDGET = 8192      # config default derived from k
+_GRAPH_MAX_NODES = 2048       # ceiling on the fenced vertex set
+_GRAPH_MAX_EDGES_PER_PROBE = 512   # rows one directed probe may return
+
 
 def _id_chunks(ids: list[int], batch: int) -> Iterator[list[int]]:
     """Split `ids` into chunks of at most `batch` elements.
@@ -1605,6 +1613,128 @@ class MemoryStore:
                 "GROUP BY kind",
             ],
         }
+
+    @_serialized
+    def graph_ranking(self, seed_ids: list[int], *, kind: str | None,
+                      agent_id: str | None, tenant: str = "default",
+                      depth: int = 2, budget: int = 256) -> list[int]:
+        """Ranked ids reachable from `seed_ids`, best first. Seeds excluded.
+
+        The graph leg's SQL half; the ranking is `graph_leg.graph_expand`, which
+        is pure and bounded. This method materialises a *fenced adjacency* and
+        hands it over, so the leg's cost is capped by `budget` rather than by
+        graph size — the property that makes it affordable where whole-graph
+        PPR was not (measured: 9.26 s at 200k nodes, versus ~0.002 s here).
+
+        Fencing is stricter than `related()`, deliberately. `edges` carries no
+        `tenant_id` column (migration 4 adds one to `memories` and `queries`
+        only), so every row here joins `memories` **twice** and fences both
+        endpoints. `link()` refuses a cross-tenant edge, but `import_jsonl`
+        re-checks neither, and direct SQL does not either — so the fence here is
+        what actually holds on a home with a bad historical edge.
+
+        Returns `[]` for every degenerate case (no seeds, no edges, everything
+        out of scope, a failed query). This leg is additive and must never
+        fail a read.
+        """
+        from .graph_leg import graph_expand, graph_seed_masses
+
+        seeds = [int(m) for m in dict.fromkeys(seed_ids) if int(m) > 0]
+        if not seeds or budget < 1:
+            return []
+        depth = max(1, min(int(depth), _GRAPH_MAX_DEPTH))
+        budget = max(1, min(int(budget), _GRAPH_MAX_BUDGET))
+
+        adjacency = self._graph_adjacency(seeds, kind=kind, agent_id=agent_id,
+                                         tenant=tenant, depth=depth)
+        if not adjacency:
+            return []
+        # Score-weighted restart masses from the fused ranking. `rrf_k` plays two
+        # roles here -- rank smoothing and seed-mass decay -- which is named
+        # rather than buried: an operator tuning it tunes both.
+        masses = graph_seed_masses({m: 1.0 for m in seeds}, seeds,
+                                   rrf_k=self.cfg.rrf_k)
+        return graph_expand(masses, adjacency, decay=self.cfg.graph_decay,
+                            budget=budget)
+
+    def _graph_adjacency(self, seeds: list[int], *, kind: str | None,
+                         agent_id: str | None, tenant: str,
+                         depth: int) -> dict[int, set[int]]:
+        """Bounded, fenced adjacency around `seeds`, level by level.
+
+        Probes `edges` per direction per level rather than with one `OR`, so
+        each statement is a PK or `edges_dst` range scan instead of an
+        `OR`-joined predicate SQLite may satisfy with a full table scan. The
+        bound is a row count on a fixed-shape statement, not a depth argument:
+        a single hub with 10,000 neighbours materialises 10,000 rows at depth 1
+        under a recursive CTE regardless of any depth cap, whereas `LIMIT` stops
+        the work before the next level begins.
+
+        `ORDER BY src, dst` is a total order, so a `LIMIT` cut is reproducible
+        run to run — which the determinism property requires and a CTE with a
+        trailing `LIMIT` does not guarantee.
+        """
+        adjacency: dict[int, set[int]] = {}
+        frontier = set(seeds)
+        seen = set(seeds)
+        # Both edge directions are written out rather than looped over a
+        # ("src", "dst") tuple. A loop variable spliced into SQL is safe here --
+        # the tuple is a literal of two identifiers this method never takes as
+        # input -- but it is not *provably* so, and the AST splice guard
+        # (SEC-A3-10) fails closed on exactly that. Unrolled, every identifier
+        # in the statement is a literal, so the guard can verify the whole thing
+        # and no allowlist entry is needed.
+        probe = """
+            FROM edges e
+            JOIN memories ma ON ma.id = e.{side}
+              AND ma.tenant_id = ?
+              AND ma.deleted_ms IS NULL AND ma.superseded_by IS NULL
+              AND (? IS NULL OR ma.kind = ?)
+              AND (? IS NULL OR ma.agent_id = ?)
+            JOIN memories mb ON mb.id = e.{other}
+              AND mb.tenant_id = ?
+              AND mb.deleted_ms IS NULL AND mb.superseded_by IS NULL
+              AND (? IS NULL OR mb.kind = ?)
+              AND (? IS NULL OR mb.agent_id = ?)
+            WHERE e.{side} IN ({placeholders})
+            ORDER BY a, b
+            LIMIT ?
+        """
+        select = "SELECT e.{side} AS a, e.{other} AS b "
+        try:
+            for _level in range(depth):
+                if not frontier:
+                    break
+                nxt: set[int] = set()
+                for side, other in (("src", "dst"), ("dst", "src")):
+                    for part in _id_chunks(sorted(frontier), self._id_batch()):
+                        placeholders = ",".join("?" * len(part))
+                        rows = self.conn.execute(
+                            select.format(side=side, other=other)
+                            + probe.format(side=side, other=other,
+                                           placeholders=placeholders),
+                            [tenant, kind, kind, agent_id, agent_id,
+                             tenant, kind, kind, agent_id, agent_id,
+                             *part, _GRAPH_MAX_EDGES_PER_PROBE],
+                        ).fetchall()
+                        for row in rows:
+                            a, b = int(row["a"]), int(row["b"])
+                            adjacency.setdefault(a, set()).add(b)
+                            if b not in seen:
+                                seen.add(b)
+                                nxt.add(b)
+                if len(seen) > _GRAPH_MAX_NODES:
+                    break
+                frontier = nxt
+        except sqlite3.Error as exc:
+            # Narrowed deliberately: server.py:257-266 narrows the same way,
+            # because a bare handler laundered a programming error into a silent
+            # downgrade (F13). The leg is additive, so degrading beats failing
+            # a read.
+            print(f"omnidb-server: graph leg unavailable ({exc}); "
+                  f"continuing without it", file=sys.stderr)
+            return {}
+        return adjacency
 
     def _home(self) -> Path:
         return Path(self.conn.execute("PRAGMA database_list").fetchone()[2]).parent
