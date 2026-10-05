@@ -1,0 +1,294 @@
+{
+  "term": "alpha",
+  "querying_tenant": "acme",
+  "cells": [
+    {
+      "own_n": 10,
+      "foreign_n": 100,
+      "containment": 0.1,
+      "size_ratio": 10.0,
+      "shared": {
+        "idf_before": 1.4816045409242156,
+        "idf_after": 2.1838015570040787,
+        "idf_shift_pct": 47.394361766861024,
+        "score_before": -1.2237754316221157,
+        "score_after": -1.4313142365843337,
+        "score_ratio": 1.1695889618302968,
+        "foreign_rows_returned": 0
+      },
+      "per_tenant": {
+        "idf_before": 1.4816045409242156,
+        "idf_after": 1.4816045409242156,
+        "idf_shift_pct": 0.0,
+        "score_before": -1.2237754316221157,
+        "score_after": -1.2237754316221157,
+        "score_ratio": 1.0,
+        "foreign_rows_returned": 0
+      }
+    },
+    {
+      "own_n": 10,
+      "foreign_n": 1000,
+      "containment": 0.1,
+      "size_ratio": 100.0,
+      "shared": {
+        "idf_before": 1.4816045409242156,
+        "idf_after": 2.2888324204420085,
+        "idf_shift_pct": 54.48335620072069,
+        "score_before": -1.2237754316221157,
+        "score_after": -1.4232923827358446,
+        "score_ratio": 1.1630339570138852,
+        "foreign_rows_returned": 0
+      },
+      "per_tenant": {
+        "idf_before": 1.4816045409242156,
+        "idf_after": 1.4816045409242156,
+        "idf_shift_pct": 0.0,
+        "score_before": -1.2237754316221157,
+        "score_after": -1.2237754316221157,
+        "score_ratio": 1.0,
+        "foreign_rows_returned": 0
+      }
+    },
+    {
+      "own_n": 10,
+      "foreign_n": 5000,
+      "containment": 0.1,
+      "size_ratio": 500.0,
+      "shared": {
+        "idf_before": 1.4816045409242156,
+        "idf_after": 2.299795135026494,
+        "idf_shift_pct": 55.223277973479775,
+        "score_before": -1.2237754316221157,
+        "score_after": -1.4220587214537506,
+        "score_ratio": 1.1620258788565563,
+        "foreign_rows_returned": 0
+      },
+      "per_tenant": {
+        "idf_before": 1.4816045409242156,
+        "idf_after": 1.4816045409242156,
+        "idf_shift_pct": 0.0,
+        "score_before": -1.2237754316221157,
+        "score_after": -1.2237754316221157,
+        "score_ratio": 1.0,
+        "foreign_rows_returned": 0
+      }
+    },
+    {
+      "own_n": 50,
+      "foreign_n": 100,
+      "containment": 0.1,
+      "size_ratio": 2.0,
+      "shared": {
+        "idf_before": 1.580450375560848,
+        "idf_after": 1.996854950670562,
+        "idf_shift_pct": 26.347209728868965,
+        "score_before": -1.349926716949016,
+        "score_after": -1.4786905737901073,
+        "score_ratio": 1.0953858125958955,
+        "foreign_rows_returned": 0
+      },
+      "per_tenant": {
+        "idf_before": 1.580450375560848,
+        "idf_after": 1.580450375560848,
+        "idf_shift_pct": 0.0,
+        "score_before": -1.349926716949016,
+        "score_after": -1.349926716949016,
+        "score_ratio": 1.0,
+        "foreign_rows_returned": 0
+      }
+    },
+    {
+      "own_n": 50,
+      "foreign_n": 1000,
+      "containment": 0.1,
+      "size_ratio": 20.0,
+      "shared": {
+        "idf_before": 1.580450375560848,
+        "idf_after": 2.2524818499191435,
+        "idf_shift_pct": 42.5215169517622,
+        "score_before": -1.349926716949016,
+        "score_after": -1.4386590211269605,
+        "score_ratio": 1.0657312008599173,
+        "foreign_rows_returned": 0
+      },
+      "per_tenant": {
+        "idf_before": 1.580450375560848,
+        "idf_after": 1.580450375560848,
+        "idf_shift_pct": 0.0,
+        "score_before": -1.349926716949016,
+        "score_after": -1.349926716949016,
+        "score_ratio": 1.0,
+        "foreign_rows_returned": 0
+      }
+    },
+    {
+      "own_n": 50,
+      "foreign_n": 5000,
+      "containment": 0.1,
+      "size_ratio": 100.0,
+      "shared": {
+        "idf_before": 1.580450375560848,
+        "idf_after": 2.2919508848633323,
+        "idf_shift_pct": 45.01884528009916,
+        "score_before": -1.349926716949016,
+        "score_after": -1.425555690449387,
+        "score_ratio": 1.0560245030717674,
+        "foreign_rows_returned": 0
+      },
+      "per_tenant": {
+        "idf_before": 1.580450375560848,
+        "idf_after": 1.580450375560848,
+        "idf_shift_pct": 0.0,
+        "score_before": -1.349926716949016,
+        "score_after": -1.349926716949016,
+        "score_ratio": 1.0,
+        "foreign_rows_returned": 0
+      }
+    },
+    {
+      "own_n": 200,
+      "foreign_n": 100,
+      "containment": 0.1,
+      "size_ratio": 0.5,
+      "shared": {
+        "idf_before": 1.6020029339465822,
+        "idf_after": 1.7851369284675616,
+        "idf_shift_pct": 11.431564240011923,
+        "score_before": -1.376991968457577,
+        "score_after": -1.460867337822216,
+        "score_ratio": 1.0609120251141269,
+        "foreign_rows_returned": 0
+      },
+      "per_tenant": {
+        "idf_before": 1.6020029339465822,
+        "idf_after": 1.6020029339465822,
+        "idf_shift_pct": 0.0,
+        "score_before": -1.376991968457577,
+        "score_after": -1.376991968457577,
+        "score_ratio": 1.0,
+        "foreign_rows_returned": 0
+      }
+    },
+    {
+      "own_n": 200,
+      "foreign_n": 1000,
+      "containment": 0.1,
+      "size_ratio": 5.0,
+      "shared": {
+        "idf_before": 1.6020029339465822,
+        "idf_after": 2.145702333306183,
+        "idf_shift_pct": 33.93872681744603,
+        "score_before": -1.376991968457577,
+        "score_after": -1.4733486898370083,
+        "score_ratio": 1.069976240665633,
+        "foreign_rows_returned": 0
+      },
+      "per_tenant": {
+        "idf_before": 1.6020029339465822,
+        "idf_after": 1.6020029339465822,
+        "idf_shift_pct": 0.0,
+        "score_before": -1.376991968457577,
+        "score_after": -1.376991968457577,
+        "score_ratio": 1.0,
+        "foreign_rows_returned": 0
+      }
+    },
+    {
+      "own_n": 200,
+      "foreign_n": 5000,
+      "containment": 0.1,
+      "size_ratio": 25.0,
+      "shared": {
+        "idf_before": 1.6020029339465822,
+        "idf_after": 2.2641115566938095,
+        "idf_shift_pct": 41.330050570887714,
+        "score_before": -1.376991968457577,
+        "score_after": -1.4373179061690813,
+        "score_ratio": 1.0438099415925262,
+        "foreign_rows_returned": 0
+      },
+      "per_tenant": {
+        "idf_before": 1.6020029339465822,
+        "idf_after": 1.6020029339465822,
+        "idf_shift_pct": 0.0,
+        "score_before": -1.376991968457577,
+        "score_after": -1.376991968457577,
+        "score_ratio": 1.0,
+        "foreign_rows_returned": 0
+      }
+    },
+    {
+      "own_n": 20,
+      "foreign_n": 100,
+      "containment": 1.0,
+      "size_ratio": 5.0,
+      "shared": {
+        "idf_before": 1.5404450409471488,
+        "idf_after": 0.14660347419187544,
+        "idf_shift_pct": -90.48304416613685,
+        "score_before": -1.2992829841302609,
+        "score_after": -7.289156626506025e-07,
+        "score_ratio": 5.610137834126552e-07,
+        "foreign_rows_returned": 0
+      },
+      "per_tenant": {
+        "idf_before": 1.5404450409471488,
+        "idf_after": 1.5404450409471488,
+        "idf_shift_pct": 0.0,
+        "score_before": -1.2992829841302609,
+        "score_after": -1.2992829841302609,
+        "score_ratio": 1.0,
+        "foreign_rows_returned": 0
+      }
+    },
+    {
+      "own_n": 20,
+      "foreign_n": 400,
+      "containment": 1.0,
+      "size_ratio": 20.0,
+      "shared": {
+        "idf_before": 1.5404450409471488,
+        "idf_after": 0.039981097183835065,
+        "idf_shift_pct": -97.40457490393474,
+        "score_before": -1.2992829841302609,
+        "score_after": -6.718322698268004e-07,
+        "score_ratio": 5.170792491187164e-07,
+        "foreign_rows_returned": 0
+      },
+      "per_tenant": {
+        "idf_before": 1.5404450409471488,
+        "idf_after": 1.5404450409471488,
+        "idf_shift_pct": 0.0,
+        "score_before": -1.2992829841302609,
+        "score_after": -1.2992829841302609,
+        "score_ratio": 1.0,
+        "foreign_rows_returned": 0
+      }
+    },
+    {
+      "own_n": 20,
+      "foreign_n": 2000,
+      "containment": 1.0,
+      "size_ratio": 100.0,
+      "shared": {
+        "idf_before": 1.5404450409471488,
+        "idf_after": 0.008197785321059454,
+        "idf_shift_pct": -99.46783006837953,
+        "score_before": -1.2992829841302609,
+        "score_after": -6.523082866525015e-07,
+        "score_ratio": 5.020525125164756e-07,
+        "foreign_rows_returned": 0
+      },
+      "per_tenant": {
+        "idf_before": 1.5404450409471488,
+        "idf_after": 1.5404450409471488,
+        "idf_shift_pct": 0.0,
+        "score_before": -1.2992829841302609,
+        "score_after": -1.2992829841302609,
+        "score_ratio": 1.0,
+        "foreign_rows_returned": 0
+      }
+    }
+  ]
+}
