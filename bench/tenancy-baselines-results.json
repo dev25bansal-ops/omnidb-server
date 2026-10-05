@@ -1,0 +1,63 @@
+{
+  "rows": [
+    {
+      "name": "OmniDB shared (pre-migration)",
+      "available": true,
+      "isolation_unit": "one shared index + tenant predicate",
+      "boundary_in_file": false,
+      "build_ms": 576.2336999978288,
+      "query_ms": 0.3152999997837469,
+      "hits": 1,
+      "note": "the layout this paper argues against; included as the reference point, not as a competitor"
+    },
+    {
+      "name": "OmniDB partitioned (this paper)",
+      "available": true,
+      "isolation_unit": "one index per tenant",
+      "boundary_in_file": false,
+      "build_ms": 358.32680000021355,
+      "query_ms": 0.2749999985098839,
+      "hits": 1,
+      "note": "separate sidecar files: the boundary exists on disk, not just in the query"
+    },
+    {
+      "name": "sqlite_vec (table/tenant)",
+      "available": true,
+      "isolation_unit": "table per tenant (one collection per tenant)",
+      "boundary_in_file": true,
+      "build_ms": 162.08819999883417,
+      "query_ms": 1.3153000036254525,
+      "hits": 10,
+      "note": "no cross-tenant index at all; the tenant's rows are physically separated within one database file"
+    },
+    {
+      "name": "qdrant (collection/tenant)",
+      "available": true,
+      "isolation_unit": "collection per tenant",
+      "boundary_in_file": true,
+      "build_ms": 168.66390000359388,
+      "query_ms": 14.374900005350355,
+      "hits": 10,
+      "note": "one index per tenant"
+    },
+    {
+      "name": "qdrant (payload filter)",
+      "available": true,
+      "isolation_unit": "payload filter over a shared collection",
+      "boundary_in_file": false,
+      "build_ms": 96.01479999400908,
+      "query_ms": 4.700799996498972,
+      "hits": 0,
+      "note": "ranking computed over the shared collection; filtering is post-hoc at query time"
+    },
+    {
+      "name": "lancedb (table/tenant)",
+      "available": true,
+      "isolation_unit": "table per tenant",
+      "boundary_in_file": true,
+      "build_ms": 463.66820000548614,
+      "query_ms": 773.9235000044573,
+      "hits": 10
+    }
+  ]
+}
