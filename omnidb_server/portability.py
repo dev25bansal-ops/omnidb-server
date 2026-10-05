@@ -12,13 +12,33 @@ from pathlib import Path
 
 from .db import get_meta, set_meta
 from .store import E_CONSTRAINT, E_NOT_FOUND, E_TYPE, StoreError, _commit_or_rollback
-from .tenancy import DEFAULT_TENANT
+from .tenancy import DEFAULT_TENANT, index_name
 from .validation import validate_content, validate_trigger_patterns
+from .vector_index import (
+    BruteForceIndex,
+    HnswlibIndex,
+    VectorIndexError,
+    open_vector_index,
+)
 
 _KINDS = ("episodic", "semantic", "procedural")
 
-# sidecar files copied alongside a backup snapshot / handled by re-embed
-_SIDECAR_NAMES = ("vectors.npz", "index.hnsw", "index.hnsw.deleted.json")
+# ADR-08 / W3-3: sidecars are per-tenant and named `tenant-<id>.<suffix>`, and
+# a home has one per tenant, so the list is discovered rather than fixed. The
+# pre-W3-3 names are in the globs too, so a snapshot taken before the home has
+# been reopened since the upgrade still carries the vectors it had.
+_SIDECAR_GLOBS = ("tenant-*.npz", "tenant-*.hnsw", "tenant-*.hnsw.deleted.json",
+                  "vectors.npz", "index.hnsw", "index.hnsw.deleted.json")
+
+
+def _sidecar_files(home) -> list:
+    """Every sidecar in `home`, newest schema first, de-duplicated by name."""
+    found: dict[str, object] = {}
+    for pattern in _SIDECAR_GLOBS:
+        for path in sorted(home.glob(pattern)):
+            if path.is_file():
+                found.setdefault(path.name, path)
+    return list(found.values())
 
 
 def backup_home(store, dest: str | Path, keep: int = 3) -> dict:
@@ -68,11 +88,9 @@ def backup_home(store, dest: str | Path, keep: int = 3) -> dict:
         raise
 
     copied = []
-    for name in _SIDECAR_NAMES:
-        src = store._home() / name
-        if src.is_file():
-            shutil.copy2(src, target / name)
-            copied.append(name)
+    for src in _sidecar_files(store._home()):
+        shutil.copy2(src, target / src.name)
+        copied.append(src.name)
 
     removed, prune_errors = _rotate_snapshots(dest, keep)
     for error in prune_errors:
@@ -143,7 +161,6 @@ def reembed_home(home: Path, target_embedder, *, assume_yes: bool = False) -> di
     from .config import Config
     from .server import _acquire_home_lock, _release_home_lock
     from .store import _SELECTIVE, MemoryStore
-    from .vector_index import BruteForceIndex, HnswlibIndex, VectorIndexError, open_vector_index
 
     def stage_rebuild(path: Path) -> Path | None:
         if not path.exists():
@@ -229,8 +246,13 @@ def reembed_home(home: Path, target_embedder, *, assume_yes: bool = False) -> di
             fresh: HnswlibIndex | BruteForceIndex
             backup_paths: list[tuple[Path, Path]] = []
             if index_kind == "hnsw":
-                hnsw_path = home_dir / "index.hnsw"
-                deleted_path = home_dir / "index.hnsw.deleted.json"
+                # ADR-08 / W3-3: per-tenant sidecars. Must match
+                # tenancy.index_name, or the re-embedded index is written
+                # where the open path never looks and the stale generation
+                # stays live.
+                hnsw_path = home_dir / index_name(DEFAULT_TENANT, "hnsw")
+                deleted_path = home_dir / index_name(
+                    DEFAULT_TENANT, "hnsw.deleted.json")
                 for path in (hnsw_path, deleted_path):
                     staged = stage_rebuild(path)
                     if staged is not None:
@@ -247,10 +269,11 @@ def reembed_home(home: Path, target_embedder, *, assume_yes: bool = False) -> di
                         "index will use the brute-force backend",
                         file=sys.stderr,
                     )
-                    fresh = BruteForceIndex(home_dir / "vectors.npz",
-                                            target_embedder.dim)
+                    fresh = BruteForceIndex(
+                        home_dir / index_name(DEFAULT_TENANT, "npz"),
+                        target_embedder.dim)
             else:
-                path = home_dir / "vectors.npz"
+                path = home_dir / index_name(DEFAULT_TENANT, "npz")
                 staged = stage_rebuild(path)
                 if staged is not None:
                     backup_paths.append((staged, path))
@@ -571,5 +594,8 @@ def import_jsonl(store, path: str | Path, *,
         # AUDIT-I04: any sqlite failure rolls the whole import back so the
         # next unrelated commit cannot persist partial rows.
         raise _commit_or_rollback(store.conn, exc) from exc
-    store._after_commit(lambda: store.index.add(new_ids, vectors), len(new_ids))
+    # ADR-08 / W3-3: the import is scoped to one tenant, so its vectors go to
+    # that tenant's sidecar — the same one the FTS postings went to above.
+    store._after_commit(
+        lambda: store.index.add(new_ids, vectors, tenant), len(new_ids))
     return {"memories": len(memories), "edges": applied_edges, "path": str(path)}

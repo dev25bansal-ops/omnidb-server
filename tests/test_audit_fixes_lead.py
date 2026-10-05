@@ -11,7 +11,7 @@ import time
 
 import numpy as np
 import pytest
-from conftest import make_store
+from conftest import make_index, make_store
 
 from omnidb_server import db as dbmod
 from omnidb_server.config import Config
@@ -19,14 +19,17 @@ from omnidb_server.embeddings import HashingEmbedder
 from omnidb_server.server import _acquire_home_lock, _release_home_lock, open_owned_store
 from omnidb_server.store import MemoryStore, StoreError
 from omnidb_server.validation import MAX_TRIGGER_PATTERNS
-from omnidb_server.vector_index import BruteForceIndex
 
 
 def _reopen(tmp_path):
     cfg = Config(home=tmp_path, embedder="hashing", vector_index="brute")
     conn = dbmod.connect(cfg.home)
     emb = HashingEmbedder()
-    idx = BruteForceIndex.load(cfg.home / "vectors.npz", emb.dim)
+    # Through open_vector_index: ADR-08 / W3-3 makes the store's index a
+    # per-tenant router, and a bare backend would fail every tenant-aware call.
+    from conftest import make_index
+
+    idx = make_index(cfg.home, "brute", emb.dim)
     return MemoryStore(conn, emb, idx, cfg)
 
 
@@ -65,12 +68,12 @@ def test_pending_revision_recovered_on_reopen(tmp_path):
                  (json.dumps([mid]),))
     conn.commit()
     conn.close()
-    (tmp_path / "vectors.npz").unlink()
+    (tmp_path / "tenant-default.npz").unlink()
 
     st2 = _reopen(tmp_path)
     assert st2.get(mid)["content"] == "v2 content"
     vec = st2.embedder.encode(["v2 content"])[0]
-    hits = st2.index.query(vec, k=1)
+    hits = st2.index.query(vec, 1, "default")
     assert hits and hits[0][0] == mid
     assert dbmod.get_meta(st2.conn, "pending_reembed") == "[]"
     st2.close()
@@ -120,7 +123,7 @@ def test_reembed_pending_marker_rebuilds_on_open(tmp_path):
     set_meta(st.conn, "reembed_pending", json.dumps({"embedder": "other", "dim": 8}))
     # corrupt the sidecar with a foreign vector so a stale read is detectable
     foreign = np.ones((1, st.embedder.dim), dtype=np.float32)
-    st.index.add([9999], foreign)
+    st.index.add([9999], foreign, "default")
     st.close()
 
     st2 = _reopen(tmp_path)
@@ -271,7 +274,7 @@ def test_reconcile_batches_fetch(tmp_path, monkeypatch):
         st.remember(f"batched {i}")
     st.flush()
     st.close()
-    (tmp_path / "vectors.npz").unlink()
+    (tmp_path / "tenant-default.npz").unlink()
 
     monkeypatch.setattr(store_mod, "_RECONCILE_BATCH_CAP", 2)
 
@@ -287,7 +290,7 @@ def test_reconcile_batches_fetch(tmp_path, monkeypatch):
     cfg = Config(home=tmp_path, embedder="hashing", vector_index="brute")
     conn = dbmod.connect(cfg.home)
     emb = RecordingEmbedder()
-    idx = BruteForceIndex(tmp_path / "vectors.npz", emb.dim)  # sidecar lost
+    idx = make_index(tmp_path, "brute", emb.dim)  # sidecar lost
     st2 = MemoryStore(conn, emb, idx, cfg)  # recovery runs during open
     assert st2.index.indexed_ids() == set(range(1, 7))
     assert emb.batches and max(emb.batches) <= 2  # bounded encode batches
@@ -299,13 +302,14 @@ def test_reconcile_batches_fetch(tmp_path, monkeypatch):
 def test_maintenance_tick_flushes_when_idle(tmp_path, monkeypatch):
     st = make_store(tmp_path, persist_every_ops=10**9, persist_max_s=0.05)
     persists = {"n": 0}
-    orig = st.index.persist
+    _orig_backend_persist = st.index.backend_for("default").persist
 
-    def counting():
+    def counting(*a, **kw):
         persists["n"] += 1
-        orig()
+        return _orig_backend_persist(*a, **kw)
 
-    st.index.persist = counting
+    st.index.backend_for("default").persist = counting
+    st._persist_count_attr = persists
     st.remember("idle dirty write")
     assert persists["n"] == 0  # below the op threshold, not yet elapsed
 

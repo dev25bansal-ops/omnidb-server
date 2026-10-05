@@ -12,7 +12,7 @@ import threading
 import time
 
 import pytest
-from conftest import make_store
+from conftest import make_index, make_store
 
 import omnidb_server.consolidate as consolidate
 from omnidb_server import db as dbmod
@@ -185,13 +185,14 @@ def test_torn_v2_migration_heals_on_open(tmp_path):
 def test_persist_policy_spaced_writes(tmp_path):
     st = make_store(tmp_path, persist_every_ops=10**9)  # op-count trigger off
     flushes = {"n": 0}
-    orig = st.index.persist
+    _orig_backend_persist = st.index.backend_for("default").persist
 
-    def counting():
+    def counting(*a, **kw):
         flushes["n"] += 1
-        orig()
+        return _orig_backend_persist(*a, **kw)
 
-    st.index.persist = counting
+    st.index.backend_for("default").persist = counting
+    st._persist_count_attr = flushes
     for i in range(6):
         st.remember(f"spaced write {i}", kind="semantic")
         time.sleep(0.08)
@@ -213,13 +214,14 @@ def test_persist_interval_scales_with_flush_cost(tmp_path):
     st._last_flush_s = 1.0  # simulate a 1s full-index dump at scale
     st._last_persist_at = st.now_fn() - 1.0  # > persist_every_s (0.25)
     flushes = {"n": 0}
-    orig = st.index.persist
+    _orig_backend_persist = st.index.backend_for("default").persist
 
-    def counting():
+    def counting(*a, **kw):
         flushes["n"] += 1
-        orig()
+        return _orig_backend_persist(*a, **kw)
 
-    st.index.persist = counting
+    st.index.backend_for("default").persist = counting
+    st._persist_count_attr = flushes
     st.remember("cost probe a", kind="semantic")
     st.remember("cost probe b", kind="semantic")
     # interval = max(0.25, 4 * 1.0) = 4s -> elapsed 1s must not flush
@@ -233,11 +235,17 @@ def test_persist_interval_scales_with_flush_cost(tmp_path):
 # --- PERF-02: brute-force buffer semantics --------------------------------------
 
 def test_brute_buffer_roundtrip(tmp_path):
+    """A backend unit test, so it constructs the backend directly.
+
+    ADR-08 / W3-3 made the store's index a per-tenant router; this exercises
+    `BruteForceIndex`'s own buffer semantics (active_count, update, remove,
+    persist, reload), which the router would only delegate to.
+    """
     import numpy as np
 
     from omnidb_server.vector_index import BruteForceIndex
 
-    idx = BruteForceIndex(tmp_path / "vectors.npz", 8)
+    idx = BruteForceIndex(tmp_path / "tenant-default.npz", 8)
     rng = np.random.default_rng(7)
     vecs = rng.normal(size=(100, 8)).astype(np.float32)
     vecs /= np.linalg.norm(vecs, axis=1, keepdims=True)
@@ -253,7 +261,7 @@ def test_brute_buffer_roundtrip(tmp_path):
     assert idx.indexed_ids() == set(range(1, 100, 2))
 
     idx.persist()
-    reloaded = BruteForceIndex.load(tmp_path / "vectors.npz", 8)
+    reloaded = BruteForceIndex.load(tmp_path / "tenant-default.npz", 8)
     assert reloaded.active_count() == 50
     assert reloaded.query(vecs[3], k=1)[0][0] != 3  # 3 was removed
 
@@ -372,12 +380,11 @@ def test_consolidation_marks_origin_and_honors_confidence_floor(tmp_path, monkey
     from omnidb_server import db as dbmod
     from omnidb_server.embeddings import HashingEmbedder
     from omnidb_server.store import MemoryStore
-    from omnidb_server.vector_index import BruteForceIndex
 
     cfg = Config(home=tmp_path, embedder="hashing", vector_index="brute", **cfg_kwargs)
     conn = dbmod.connect(tmp_path)
     st = MemoryStore(conn, HashingEmbedder(),
-                     BruteForceIndex(tmp_path / "vectors.npz", 512), cfg)
+                     make_index(tmp_path, "brute", 512), cfg)
     for i in range(3):
         st.remember(f"episode {i}: prefers dark mode", kind="episodic")
 
@@ -414,13 +421,17 @@ def test_agent_overfetch_scales_dense_fetch(tmp_path):
         st.remember(f"overfetch filler {i}", agent_id="a")
     seen = []
 
-    orig_query = st.index.query
+    # ADR-08 / W3-3: the router is slotted, so the spy goes on the backend it
+    # delegates to. recall now passes the tenant through, which is the thing
+    # this test is watching — the over-fetch factor for agent-scoped recalls.
+    backend = st.index.backend_for("default")
+    orig_query = backend.query
 
     def spy(vec, k):
         seen.append(k)
         return orig_query(vec, k)
 
-    st.index.query = spy
+    backend.query = spy
     st.recall("overfetch filler", k=5, agent_id="a")
     base = seen[-1]
     seen.clear()
@@ -449,7 +460,9 @@ def test_ef_search_config_reaches_hnsw(tmp_path):
     conn = connect(cfg.home)
     emb = HashingEmbedder()
     idx = open_vector_index(cfg.home, "hnsw", emb.dim, 0, ef_search=cfg.ef_search)
-    assert idx.index.ef == 128
+    # ADR-08 / W3-3: the store's index is a per-tenant router, so the hnswlib
+    # object lives one hop down, on that tenant's backend.
+    assert idx.backend_for("default").index.ef == 128
     conn.close()
 
 

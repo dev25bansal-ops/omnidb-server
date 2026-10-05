@@ -13,8 +13,8 @@ import pytest
 
 from omnidb_server.tenancy import TenantError
 from omnidb_server.vector_index import (
-    MultiTenantIndexError,
     MultiTenantIndexRouter,
+    VectorIndexError,
     make_multi_tenant_router,
 )
 
@@ -100,7 +100,7 @@ class TestMultiTenantIndexRouterBasics:
             router1.add(ids, vecs, tenant="p")
             router1.persist("p")
             # Sidecar should exist
-            p_path = home / "tenants" / "p" / "vectors.npz"
+            p_path = home / "tenant-p.npz"
             assert p_path.exists(), "persist() did not create sidecar file"
             # Reload via new router and verify all IDs are present
             router2 = MultiTenantIndexRouter(home, dim=3, kind="brute")
@@ -164,31 +164,33 @@ class TestMultiTenantIndexRouterPersistFlushing:
             router.add([10, 20], np.ones((2, 3), dtype="float32"), tenant="f2")
             router.flush_all()  # explicit flush of all
             # Both sidecars should exist
-            assert (home / "tenants" / "f1" / "vectors.npz").exists()
-            assert (home / "tenants" / "f2" / "vectors.npz").exists()
+            assert (home / "tenant-f1.npz").exists()
+            assert (home / "tenant-f2.npz").exists()
 
 
 class TestMultiTenantIndexError:
     """MultiTenantIndexError usage and propagation."""
 
     def test_error_raised_on_failed_init(self):
-        """A corrupt sidecar surfaces as MultiTenantIndexError, not a raw one.
+        """A corrupt sidecar surfaces as VectorIndexError, not a raw one.
 
-        The router wraps backend construction, so a BruteForceIndex.load that
-        raises something unexpected must still reach the caller as the router's
-        own error type — otherwise a bad sidecar on one tenant escapes as a
-        KeyError from numpy and the operator sees a stack trace instead of the
-        tenant it belongs to.
+        The router does not re-wrap `VectorIndexError`. That type is the
+        recoverable-signal contract from audit C6: `open_read_only_store` and
+        `open_owned_store` catch exactly it to fall back to a rebuilt index, and
+        wrapping it in MultiTenantIndexError turned a recoverable corrupt
+        sidecar into a failed open. Any *other* failure during backend
+        construction still becomes MultiTenantIndexError, so an unexpected error
+        is not silently downgraded.
         """
         with tempfile.TemporaryDirectory() as tmp_dir:
             home = Path(tmp_dir)
-            (home / "tenants" / "f1").mkdir(parents=True)
+            (home).mkdir(parents=True, exist_ok=True)
             # A file where the sidecar's parent expects a readable index: an
             # .npz that is not a zip at all.
-            (home / "tenants" / "f1" / "vectors.npz").write_bytes(b"not a zip")
+            (home / "tenant-f1.npz").write_bytes(b"not a zip")
 
             router = MultiTenantIndexRouter(home, dim=512, kind="brute")
-            with pytest.raises(MultiTenantIndexError):
+            with pytest.raises(VectorIndexError):
                 router.get_or_create("f1")
 
 class TestTenantIdValidation:
@@ -247,4 +249,12 @@ class TestTenantIdValidation:
             router = MultiTenantIndexRouter(home, dim=512, kind="brute")
             backend = router.get_or_create("acme-corp_1")
             assert backend is not None
-            assert (home / "tenants" / "acme-corp_1").is_dir()
+            # The backend is built lazily and writes nothing until persist, so
+            # the property asserted here is that it resolved to the flat,
+            # validated per-tenant path — not that a file appeared.
+            assert backend.path == home / "tenant-acme-corp_1.npz", (
+                "a legal tenant id must resolve to the flat per-tenant "
+                "sidecar name produced by tenancy.index_name"
+            )
+            router.persist("acme-corp_1")
+            assert (home / "tenant-acme-corp_1.npz").exists()

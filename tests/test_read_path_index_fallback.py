@@ -59,7 +59,9 @@ def test_an_unusable_index_still_falls_back_and_says_why(home, monkeypatch, caps
     monkeypatch.setattr("omnidb_server.vector_index.open_vector_index", unusable)
     store = srv.open_read_only_store(_read_cfg(home))
     try:
-        assert isinstance(store.index, BruteForceIndex)
+        # ADR-08 / W3-3: the index is a per-tenant router; the brute backend
+        # it fell back to is that tenant's backend.
+        assert isinstance(store.index.backend_for("default"), BruteForceIndex)
     finally:
         store.close()
     err = capsys.readouterr().err

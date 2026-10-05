@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Iterator
 from .config import Config
 from .db import SCHEMA_VERSION, get_meta, set_meta
 from .embeddings import Embedder
-from .tenancy import DEFAULT_TENANT, validate_tenant_id
+from .tenancy import DEFAULT_TENANT, index_name, validate_tenant_id
 from .validation import validate_content, validate_trigger_patterns
 
 if TYPE_CHECKING:
@@ -200,6 +200,21 @@ def _check_cold_start_budget(cold_start_ms: float) -> None:
         )
 
 
+def _as_router(index, home):
+    """Accept either a backend or a router and return a router.
+
+    ADR-08 / W3-3. Production goes through `open_vector_index`, which returns a
+    router; this covers the other doors — a backup restore, and unit tests that
+    build a backend directly to exercise its own semantics. Wrapping keeps them
+    working rather than making every call site defend against both shapes.
+    """
+    from .vector_index import MultiTenantIndexRouter
+
+    if isinstance(index, MultiTenantIndexRouter):
+        return index
+    return MultiTenantIndexRouter.single(index, home)
+
+
 class MemoryStore:
     def __init__(self, conn: sqlite3.Connection, embedder: Embedder,
                  index: "HnswlibIndex | BruteForceIndex", cfg: Config,
@@ -211,7 +226,15 @@ class MemoryStore:
         self._op_lock = threading.RLock()
         self.conn = conn
         self.embedder = embedder
-        self.index: HnswlibIndex | BruteForceIndex = index
+        # ADR-08 / W3-3: every tenant's vectors live in their own sidecar, so
+        # the store holds a per-tenant router rather than a single backend.
+        #
+        # A bare backend passed in is wrapped in a single-tenant router over the
+        # same file, so the ~19 index call sites below need one shape rather
+        # than two. That matters for the public Python API and for unit tests
+        # that construct a backend to exercise its own semantics: wrapping keeps
+        # them working rather than making every call site defend against both.
+        self.index = _as_router(index, self._home())
         self.cfg = cfg
         self.now_fn = now_fn
         # AUDIT-I02: a read-only diagnostic store performs zero persistence:
@@ -250,7 +273,11 @@ class MemoryStore:
             set_meta(conn, "schema_version", str(SCHEMA_VERSION))
             set_meta(conn, "embedder", embedder.name)
             set_meta(conn, "vec_dim", str(embedder.dim))
-            set_meta(conn, "vec_kind", index.kind)
+            # ADR-08 / W3-3: persist the *backend* name, not the router's
+            # display label. `kind` is "multi" until a backend exists, and
+            # vec_kind is read back on the next open to pick one.
+            set_meta(conn, "vec_kind",
+                     getattr(index, "configured_kind", index.kind))
         self._cold_start_ms = round((time.perf_counter() - t0) * 1000, 2)
         _check_cold_start_budget(self._cold_start_ms)
 
@@ -297,13 +324,63 @@ class MemoryStore:
             self.conn.commit()
             return
         dirty = get_meta(self.conn, "index_dirty") == "1"
-        if not dirty and not self._pending_reembed \
-                and self.index.active_count() == self._live_count():
-            return
+        # ADR-08 / W3-3: backends are lazy, so `active_count()` is 0 on a home
+        # whose indexes have not been read yet. Comparing that against the live
+        # row count would make every open look like drift and reconcile the
+        # whole home every start — so when no index has been loaded, the
+        # question is answered from the sidecars on disk instead: a file that
+        # disagrees with the rows is the crash window this exists to heal, and
+        # a file that is absent entirely is sidecar loss, which reconciliation
+        # also rebuilds. Only a home with neither is genuinely clean.
+        loaded = self._index_backends_loaded()
+        if not dirty and not self._pending_reembed:
+            if not loaded:
+                if not self._sidecars_present() and self._live_count() > 0:
+                    # Rows exist but no index file does: lost sidecar.
+                    pass
+                elif not self._sidecars_present() and self._live_count() == 0:
+                    return
+                elif self._index_matches_rows():
+                    return
+            elif self.index.active_count() == self._live_count():
+                return
         t0 = time.perf_counter()
         self._reconcile_index()
         set_meta(self.conn, "reconciled_at", _iso(int(time.time() * 1000)) or "")
         set_meta(self.conn, "reconciled_ms", f"{(time.perf_counter() - t0) * 1000:.1f}")
+
+    def _sidecars_present(self) -> bool:
+        """Whether any tenant's vector sidecar exists on disk."""
+        home = self._home()
+        return any(home.glob("tenant-*.npz")) or any(home.glob("tenant-*.hnsw"))
+
+    def _index_backends_loaded(self) -> bool:
+        """Whether any tenant's index has actually been read in.
+
+        ADR-08 / W3-3. The router constructs backends lazily, so this is false
+        on a clean open — which is why the reconciliation guard cannot ask the
+        router for a count and believe the answer.
+        """
+        tenants = getattr(self.index, "tenants", None)
+        return bool(tenants()) if callable(tenants) else True
+
+    def _index_matches_rows(self) -> bool:
+        """Whether every tenant's sidecar already holds its live rows.
+
+        Read through the router so each tenant is compared against its own rows;
+        a whole-home total would hide one tenant being short behind another's
+        surplus.
+        """
+        for tenant in self._tenants_with_rows():
+            if self.index.indexed_ids(tenant) != self._live_ids_for(tenant):
+                return False
+        return True
+    def _live_ids_for(self, tenant: str) -> set[int]:
+        return {
+            int(r["id"]) for r in self.conn.execute(
+                f"SELECT id FROM memories WHERE {_SELECTIVE} AND tenant_id = ?",
+                (tenant,))
+        }
 
     def _reconcile_index(self) -> None:
         """Self-heal crash windows between the DB commit and index persist:
@@ -313,26 +390,41 @@ class MemoryStore:
         AUDIT-I01: membership alone cannot see a same-ID content revision,
         so ids recorded in `pending_reembed` are re-embedded too.
         AUDIT-I13: fetch/encode/remove run in bounded batches so a lost
-        sidecar cannot materialize the whole home in one query."""
+        sidecar cannot materialize the whole home in one query.
+
+        ADR-08 / W3-3: the comparison is per-tenant. With one sidecar per tenant
+        a whole-home diff would treat every *other* tenant's rows as stale when
+        rebuilding one tenant's index, and remove them from it.
+        """
         self._mark_dirty()
-        live = {
-            int(r["id"])
-            for r in self.conn.execute(f"SELECT id FROM memories WHERE {_SELECTIVE}")
-        }
-        indexed = self.index.indexed_ids()
-        missing = sorted((live - indexed) | (self._pending_reembed & live))
-        stale = sorted(indexed - live)
-        for part in _id_chunks(missing, self._id_batch()):
-            placeholders = ",".join("?" * len(part))
-            rows = self.conn.execute(
-                f"SELECT id, content FROM memories WHERE id IN ({placeholders})",
-                part,
-            ).fetchall()
-            vectors = self.embedder.encode([r["content"] for r in rows])
-            self.index.add([int(r["id"]) for r in rows], vectors)
-        for part in _id_chunks(stale, self._id_batch()):
-            self.index.remove(part)
+        for tenant in self._tenants_with_rows():
+            live = {
+                int(r["id"])
+                for r in self.conn.execute(
+                    f"SELECT id FROM memories WHERE {_SELECTIVE} "
+                    f"AND tenant_id = ?", (tenant,))
+            }
+            indexed = self.index.indexed_ids(tenant)
+            missing = sorted((live - indexed)
+                             | (self._pending_reembed & live))
+            stale = sorted(indexed - live)
+            for part in _id_chunks(missing, self._id_batch()):
+                placeholders = ",".join("?" * len(part))
+                rows = self.conn.execute(
+                    f"SELECT id, content FROM memories WHERE id IN ({placeholders})",
+                    part,
+                ).fetchall()
+                vectors = self.embedder.encode([r["content"] for r in rows])
+                self.index.add([int(r["id"]) for r in rows], vectors, tenant)
+            for part in _id_chunks(stale, self._id_batch()):
+                self.index.remove(part, tenant)
         self._persist_index()
+
+    def _tenants_with_rows(self) -> list[str]:
+        """Every tenant owning at least one live row, sorted for stable output."""
+        return [r[0] for r in self.conn.execute(
+            f"SELECT DISTINCT tenant_id FROM memories WHERE {_SELECTIVE} "
+            f"ORDER BY tenant_id")]
 
     def _id_batch(self) -> int:
         """The largest id list this connection can bind in one statement.
@@ -644,7 +736,19 @@ class MemoryStore:
             # unrelated commit would otherwise persist them with no vectors
             # in the index (BUG-03).
             raise _commit_or_rollback(self.conn, exc) from exc
-        self._after_commit(lambda: self.index.add(new_ids, vectors), len(new_ids))
+        # ADR-08 / W3-3: the index is per-tenant, so a batch that interleaves
+        # tenants must be split across sidecars. Grouped rather than resolved
+        # per row so the statement count tracks tenants, not rows.
+        def _add_to_index() -> None:
+            by_tenant: dict[str, tuple[list[int], list]] = {}
+            for mid, vec, tenant in zip(new_ids, vectors, tenants):
+                ids, vecs = by_tenant.setdefault(tenant, ([], []))
+                ids.append(int(mid))
+                vecs.append(vec)
+            for tenant, (ids, vecs) in by_tenant.items():
+                self.index.add(ids, vecs, tenant)
+
+        self._after_commit(_add_to_index, len(new_ids))
         return [
             _with_took({"id": mid, "kind": k}, t0)
             for mid, k in zip(new_ids, kinds)
@@ -734,7 +838,7 @@ class MemoryStore:
             raise _commit_or_rollback(self.conn, exc) from exc
         if new_content is not None:
             self._pending_reembed.add(int(memory_id))
-            self._after_commit(lambda: self.index.update(memory_id, vec), 1)
+            self._after_commit(lambda: self.index.update(memory_id, vec, tenant), 1)
         return _with_took({"id": memory_id, "updated": updated}, t0)
 
     @_serialized
@@ -776,7 +880,7 @@ class MemoryStore:
             self.conn.commit()
         except sqlite3.Error as exc:
             raise _commit_or_rollback(self.conn, exc) from exc
-        self._after_commit(lambda: self.index.remove(forgotten), len(forgotten),
+        self._after_commit(lambda: self.index.remove(forgotten, tenant), len(forgotten),
                            compaction=True)
         return _with_took({"forgotten": forgotten, "missing": missing}, t0)
 
@@ -844,7 +948,7 @@ class MemoryStore:
         if cur.rowcount == 0:
             raise StoreError(f"memory {old_id} is already superseded", E_CONSTRAINT)
         # the old row leaves the live set, so treat it like a soft delete
-        self._after_commit(lambda: self.index.remove([old_id]), 1, compaction=True)
+        self._after_commit(lambda: self.index.remove([old_id], tenant), 1, compaction=True)
         return {"superseded": old_id, "by": new_id}
 
     def _validate_links(self, links: list[dict],
@@ -1145,8 +1249,8 @@ class MemoryStore:
         # may never be reached. Brute needs nothing: its .npz is rewritten from
         # live rows on every flush.
         rebuilt: dict | None = None
-        if purged and self.index.kind == "hnsw":
-            rebuilt = self.rebuild_index(reason="purge")
+        if purged and self.index.configured_kind == "hnsw":
+            rebuilt = self.rebuild_index(reason="purge", tenant=tenant)
         result: dict = {"purged": purged}
         if rebuilt is not None:
             result["index"] = {"rebuilt": rebuilt["rebuilt"],
@@ -1154,78 +1258,94 @@ class MemoryStore:
         return result
 
     def _schedule_compaction_if_needed(self) -> None:
-        if self.index.kind == "hnsw" and self.index.dead_ratio >= self.cfg.dead_compact_ratio:
+        if (self.index.configured_kind == "hnsw"
+                and self.index.dead_ratio >= self.cfg.dead_compact_ratio):
             set_meta(self.conn, "compaction_due", "1")
 
     @_serialized
-    def rebuild_index(self, reason: str = "manual") -> dict:
-        """Full vector rebuild from DB contents (compaction / sidecar loss)."""
+    def rebuild_index(self, reason: str = "manual",
+                      tenant: str | None = None) -> dict:
+        """Full vector rebuild from DB contents (compaction / sidecar loss).
+
+        ADR-08 / W3-3: per tenant. With one sidecar per tenant, a rebuild is
+        "drop this tenant's index and rebuild it from its own rows" — and it
+        *must* be per tenant, because rebuilding one tenant's index from the
+        whole home's rows would index another tenant's memories into it.
+
+        `tenant=None` rebuilds every tenant that owns rows, which is what
+        compaction and the purge-after-delete path want.
+        """
         from .vector_index import BruteForceIndex, HnswlibIndex
 
-        rows = self.conn.execute(
-            f"SELECT id, content FROM memories WHERE {_SELECTIVE} ORDER BY id"
-        ).fetchall()
-        dim = self.embedder.dim
-        home = self._home()
-
-        fresh: HnswlibIndex | BruteForceIndex
-        # BUG-A1-12: construct first, unlink after. The old order deleted the
-        # sidecar and then constructed its replacement, so a constructor
-        # failure (dim mismatch, hnswlib error) destroyed the only vector copy
-        # and forced a full re-embed. Building into a scratch path and
-        # publishing with os.replace makes a failed rebuild a no-op.
-        if isinstance(self.index, HnswlibIndex):
-            scratch_path = home / "index.hnsw.rebuilding"
-            scratch_path.unlink(missing_ok=True)
-            (home / "index.hnsw.rebuilding.deleted.json").unlink(missing_ok=True)
-            fresh = HnswlibIndex(scratch_path, dim, count_hint=len(rows),
-                                 ef_search=self.cfg.ef_search)
-        else:
-            scratch_path = home / "vectors.npz.rebuilding"
-            scratch_path.unlink(missing_ok=True)
-            fresh = BruteForceIndex(scratch_path, dim)
-        # remember where the scratch artifacts live so the swap can publish
-        # them under the canonical names once the build has succeeded
-        scratch_deleted = scratch_path.with_name(
-            scratch_path.name + ".deleted.json")
-
         self._mark_dirty()
-        chunk = 512
-        for start in range(0, len(rows), chunk):
-            part = rows[start : start + chunk]
-            vectors = self.embedder.encode([r["content"] for r in part])
-            fresh.add([int(r["id"]) for r in part], vectors)
-        # Materialise the scratch artifacts BEFORE publishing. An index object
-        # writes nothing to disk until persist(), so replacing first would
-        # rename a file that does not exist yet.
-        fresh.persist()
-        # The build succeeded, so the scratch artifacts can be published under
-        # the canonical names. Until this point the previous sidecar was
-        # untouched and the home remained loadable.
-        canonical = (home / "index.hnsw") if isinstance(
-            self.index, HnswlibIndex) else (home / "vectors.npz")
-        os.replace(scratch_path, canonical)
-        if scratch_deleted.exists():
-            os.replace(scratch_deleted, canonical.with_name(
-                canonical.name + ".deleted.json"))
-        # the index object keeps writing to self.path, so repoint it at the
-        # published name before it becomes the live index. The tombstone
-        # sidecar must be repointed under its REAL attribute name: guarded by
-        # `hasattr(fresh, "deleted_path")` (no such attribute) the repoint was
-        # silently skipped, so every later persist() wrote tombstones to the
-        # scratch file while the canonical sidecar stayed empty — and the open
-        # path, which reads only the canonical name, resurrected every deleted
-        # row into dense results after a reopen.
-        fresh.path = canonical
-        if hasattr(fresh, "_deleted_path"):
-            fresh._deleted_path = canonical.with_name(
-                canonical.name + ".deleted.json")
-        self.index = fresh
+        targets = ([tenant] if tenant is not None
+                   else self._tenants_with_rows())
+        home = self._home()
+        dim = self.embedder.dim
+        rebuilt = 0
+
+        for one in targets:
+            rows = self.conn.execute(
+                f"SELECT id, content FROM memories WHERE {_SELECTIVE} "
+                f"AND tenant_id = ? ORDER BY id", (one,)
+            ).fetchall()
+            is_hnsw = self.index.configured_kind == "hnsw"
+
+            # BUG-A1-12: construct first, unlink after. The old order deleted
+            # the sidecar and then constructed its replacement, so a constructor
+            # failure (dim mismatch, hnswlib error) destroyed the only vector
+            # copy and forced a full re-embed. Building into a scratch path and
+            # publishing with os.replace makes a failed rebuild a no-op.
+            canonical = (home / index_name(one, "hnsw") if is_hnsw
+                         else home / index_name(one, "npz"))
+            scratch_path = canonical.with_name(canonical.name + ".rebuilding")
+            scratch_path.unlink(missing_ok=True)
+            (scratch_path.with_name(scratch_path.name + ".deleted.json")
+             ).unlink(missing_ok=True)
+
+            fresh: HnswlibIndex | BruteForceIndex
+            if is_hnsw:
+                fresh = HnswlibIndex(scratch_path, dim, count_hint=len(rows),
+                                     ef_search=self.cfg.ef_search)
+            else:
+                fresh = BruteForceIndex(scratch_path, dim)
+
+            chunk = 512
+            for start in range(0, len(rows), chunk):
+                part = rows[start:start + chunk]
+                vectors = self.embedder.encode([r["content"] for r in part])
+                fresh.add([int(r["id"]) for r in part], vectors)
+            # Materialise the scratch artifacts BEFORE publishing. An index
+            # object writes nothing to disk until persist(), so replacing first
+            # would rename a file that does not exist yet.
+            fresh.persist()
+            scratch_deleted = scratch_path.with_name(
+                scratch_path.name + ".deleted.json")
+            os.replace(scratch_path, canonical)
+            if scratch_deleted.exists():
+                os.replace(scratch_deleted, canonical.with_name(
+                    canonical.name + ".deleted.json"))
+            # The index object keeps writing to self.path, so repoint it at the
+            # published name before it becomes the live backend. The tombstone
+            # sidecar must be repointed under its REAL attribute name: guarded
+            # by `hasattr(fresh, "deleted_path")` (no such attribute) the
+            # repoint was silently skipped, so every later persist() wrote
+            # tombstones to the scratch file while the canonical sidecar stayed
+            # empty — and the open path, which reads only the canonical name,
+            # resurrected every deleted row into dense results after a reopen.
+            fresh.path = canonical
+            if hasattr(fresh, "_deleted_path"):
+                fresh._deleted_path = canonical.with_name(
+                    canonical.name + ".deleted.json")
+            self.index.replace_backend(one, fresh)
+            rebuilt += len(rows)
+
         self._persist_index()
         set_meta(self.conn, "compaction_due", "0")
         set_meta(self.conn, "last_rebuild_reason", reason)
-        return {"rebuilt": len(rows), "reason": reason,
-                "index_kind": self.index.kind}
+        return {"rebuilt": rebuilt, "reason": reason,
+                "index_kind": self.index.configured_kind,
+                "tenants": targets}
 
     # -- introspection -----------------------------------------------------
 

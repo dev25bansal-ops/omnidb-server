@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 import tempfile
 import threading
 import time
@@ -11,7 +10,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .tenancy import validate_tenant_id
+from .tenancy import index_name, validate_tenant_id
 
 
 class VectorIndexError(RuntimeError):
@@ -309,54 +308,95 @@ def _atomic_write(path: Path, writer) -> None:
             os.unlink(tmp_name)
 
 
+def rename_shared_sidecar(home: Path) -> list[str]:
+    """Move a pre-W3-3 shared sidecar onto the default tenant's name.
+
+    ADR-08 / W3-3. Before this change every tenant's vectors lived in one
+    `index.hnsw` / `vectors.npz`. Those are the *default* tenant's vectors — every
+    pre-tenant row was written under that id — so the upgrade is a rename, not a
+    rebuild: the contents are already correct and moving the file is lossless and
+    free, where rebuilding would re-embed the whole home for nothing.
+
+    Returns the names moved, for logging and for tests.
+
+    Deliberately conservative about the collision case. If a per-tenant sidecar
+    already exists alongside the legacy one, the home is mid-upgrade or
+    hand-edited, and the safe reading is to leave both in place and let
+    reconciliation notice the drift — deleting either would lose vectors.
+    """
+    from .tenancy import DEFAULT_TENANT
+
+    moved: list[str] = []
+    # (legacy name, suffix) — the deleted-id tombstone travels with its index.
+    for legacy_name, suffix in (
+        ("index.hnsw", "hnsw"),
+        ("vectors.npz", "npz"),
+        ("index.hnsw.deleted.json", "hnsw.deleted.json"),
+    ):
+        legacy = home / legacy_name
+        if not legacy.exists():
+            continue
+        target_name = index_name(DEFAULT_TENANT, suffix)
+        target = home / target_name
+        if target.exists():
+            # Both present: leave the legacy file alone rather than clobber
+            # either side. `check()` reports the divergence.
+            continue
+        os.replace(legacy, target)
+        moved.append(f"{legacy_name} -> {target_name}")
+    return moved
+
+
 def open_vector_index(home: Path, kind: str, dim: int, count_hint: int,
                       ef_search: int = 64):
-    """kind: auto | hnsw | brute. auto prefers hnswlib, falls back to brute."""
-    hnsw_path = home / "index.hnsw"
-    brute_path = home / "vectors.npz"
-    if kind == "hnsw":
-        if not hnsw_path.exists() and brute_path.exists():
+    """Open the home's vector index.
+
+    ADR-08 / W3-3: this returns a `MultiTenantIndexRouter`, so every tenant's
+    vectors live in its own sidecar and a filesystem actor reading the home gets
+    one tenant's embeddings rather than all of them.
+
+    `kind` keeps its old meaning — the *backend* preference — and is what
+    `meta.vec_kind` round-trips: auto | hnsw | brute, with auto preferring
+    hnswlib and falling back to brute. The backend-mismatch guards below are
+    evaluated against the legacy names too, because a home that was written
+    before this change still has its vectors in `index.hnsw` / `vectors.npz`
+    until `rename_shared_sidecar` has run.
+    """
+    from .tenancy import DEFAULT_TENANT
+
+    # Upgrade first: a legacy home's sidecar must reach its per-tenant name
+    # before anything looks for one. Idempotent, and a no-op on a fresh home.
+    rename_shared_sidecar(home)
+
+    router_kind = "brute" if kind == "brute" else (
+        "hnsw" if kind == "hnsw" else "auto")
+    legacy_hnsw = home / "index.hnsw"
+    legacy_brute = home / "vectors.npz"
+    per_tenant_hnsw = home / index_name(DEFAULT_TENANT, "hnsw")
+    per_tenant_brute = home / index_name(DEFAULT_TENANT, "npz")
+
+    if router_kind == "hnsw":
+        have_brute = legacy_brute.exists() or per_tenant_brute.exists()
+        have_hnsw = legacy_hnsw.exists() or per_tenant_hnsw.exists()
+        # Both guards are conditional on the *other* backend existing. A home
+        # with no sidecar at all (a fresh `init`, or one whose rows are all
+        # unindexed) has nothing to contradict, and must open rather than fail.
+        if have_brute and not have_hnsw:
             raise VectorIndexError(
                 "this home was built with the brute-force backend; "
                 "use OMNIDB_INDEX=brute (or unset) to keep its vectors reachable"
             )
-        return HnswlibIndex(hnsw_path, dim, count_hint=count_hint,
-                            ef_search=ef_search)
-    if kind == "brute":
-        if not brute_path.exists() and hnsw_path.exists():
+    elif router_kind == "brute":
+        have_hnsw = legacy_hnsw.exists() or per_tenant_hnsw.exists()
+        have_brute = legacy_brute.exists() or per_tenant_brute.exists()
+        if have_hnsw and not have_brute:
             raise VectorIndexError(
                 "this home was built with the hnsw backend; "
                 "use OMNIDB_INDEX=hnsw (or unset) to keep its vectors reachable"
             )
-        return BruteForceIndex.load(brute_path, dim)
-    if hnsw_path.exists():
-        try:
-            return HnswlibIndex(hnsw_path, dim, count_hint=count_hint,
-                                ef_search=ef_search)
-        except VectorIndexError:
-            pass  # hnswlib not installed: expected offline fallback
-        except Exception as exc:
-            # ARCH-04: a corrupt/foreign sidecar silently downgrading is a
-            # support nightmare — say why on stderr before falling back
-            print(
-                f"omnidb-server: hnsw sidecar {hnsw_path.name} failed to open "
-                f"({exc}); falling back to the brute-force backend",
-                file=sys.stderr,
-            )
-    if brute_path.exists():
-        return BruteForceIndex.load(brute_path, dim)
-    try:
-        return HnswlibIndex(hnsw_path, dim, count_hint=count_hint,
-                            ef_search=ef_search)
-    except VectorIndexError:
-        return BruteForceIndex(brute_path, dim)
-    except Exception as exc:
-        print(
-            f"omnidb-server: hnsw sidecar {hnsw_path.name} failed to open "
-            f"({exc}); falling back to the brute-force backend",
-            file=sys.stderr,
-        )
-        return BruteForceIndex(brute_path, dim)
+    return MultiTenantIndexRouter(home, dim, kind=router_kind,
+                                  ef_search=ef_search)
+
 
 
 # ======================================================
@@ -393,7 +433,13 @@ class MultiTenantIndexRouter:
 
     @property
     def kind(self) -> str:
-        """Report a single view of backend."""
+        """Display view of the backends behind this router.
+
+        Reports "multi" whenever more than one backend kind is in play, or when
+        none has been constructed yet. This is a *label*, not a backend name —
+        see `configured_kind` for the value that has to survive a round-trip
+        through `meta.vec_kind`.
+        """
         with self._lock:
             backends = list(self._backends.values())
             has_hnsw = any(isinstance(b, HnswlibIndex) for b in backends)
@@ -405,6 +451,47 @@ class MultiTenantIndexRouter:
             if has_brute and not has_hnsw:
                 return "brute"
             return "multi"
+
+    @property
+    def configured_kind(self) -> str:
+        """The backend name to persist in `meta.vec_kind`.
+
+        `store.py` writes `index.kind` to `vec_kind` on open and `server.py` reads
+        it back to pick the backend on the next open, so this must be a name
+        `open_vector_index` can construct. `kind` cannot serve that role: it
+        reports "multi" whenever no backend exists yet, and backends are lazy, so
+        persisting that would make the reopen fall through to `auto` — silently
+        moving a home off the backend it was built with.
+        """
+        with self._lock:
+            backends = list(self._backends.values())
+            has_hnsw = any(isinstance(b, HnswlibIndex) for b in backends)
+            has_brute = any(isinstance(b, BruteForceIndex) for b in backends)
+            if has_hnsw and not has_brute:
+                return "hnsw"
+            if has_brute and not has_hnsw:
+                return "brute"
+            if has_hnsw and has_brute:
+                return "multi"
+        preference = self._kind_preference
+        if preference in ("hnsw", "brute"):
+            return preference
+        # "auto" with no backend constructed yet. Backends are lazy, so this is
+        # the *normal* state at open time, and it has to name the backend this
+        # router will actually build.
+        #
+        # Deliberately "brute", not hnswlib-availability: the router only
+        # constructs hnsw when its preference is hnsw (see
+        # `_get_backend_for_tenant`, where "auto" maps to brute). Reporting
+        # "hnsw" here wrote a vec_kind the home never used, and the next open
+        # then refused it as a backend mismatch — a home that could not reopen
+        # itself.
+        return "brute"
+
+    def tenants(self) -> list[str]:
+        """Every tenant with a backend constructed, sorted for stable output."""
+        with self._lock:
+            return sorted(self._backends)
 
     def _get_backend_for_tenant(self, tenant: str) -> "HnswlibIndex | BruteForceIndex":
         """Get or lazily construct a tenant's backend index.
@@ -421,10 +508,12 @@ class MultiTenantIndexRouter:
             if tenant in self._backends:
                 return self._backends[tenant]
             backend_kind = self._kind_preference if self._kind_preference != "auto" else "brute"
-            idx_path_home = self._home / "tenants" / tenant
-            idx_path_home.mkdir(parents=True, exist_ok=True)
-            hnsw_path = idx_path_home / "index.hnsw"
-            brute_path = idx_path_home / "vectors.npz"
+            # ADR-08 / W3-3: sidecars sit beside omnidb.db as
+            # tenant-<id>.{hnsw,npz}, named by tenancy.index_name — the same
+            # helper the rename migration uses, so writer and migration cannot
+            # disagree about where a tenant's vectors live.
+            hnsw_path = self._home / index_name(tenant, "hnsw")
+            brute_path = self._home / index_name(tenant, "npz")
             fresh: "HnswlibIndex | BruteForceIndex"
             if backend_kind == "hnsw":
                 try:
@@ -435,10 +524,55 @@ class MultiTenantIndexRouter:
                     pass
             try:
                 fresh = BruteForceIndex.load(brute_path, self._dim) if brute_path.exists() else BruteForceIndex(brute_path, self._dim)
+            except VectorIndexError:
+                # Preserve the type. A corrupt sidecar converts to
+                # VectorIndexError precisely so `open_read_only_store` and
+                # `open_owned_store` can catch it and fall back (audit C6);
+                # re-wrapping it in MultiTenantIndexError hid that and turned
+                # a recoverable sidecar into a failed open.
+                raise
             except Exception as exc:
                 raise MultiTenantIndexError(f"Failed to init brute index for tenant {tenant}: {exc}")
             self._backends[tenant] = fresh
             return fresh
+
+    @classmethod
+    def single(cls, backend, home: Path) -> "MultiTenantIndexRouter":
+        """A router that already holds `backend` as the default tenant's.
+
+        ADR-08 / W3-3. Production builds a router through `open_vector_index`,
+        but `MemoryStore` can also be handed a bare backend — by a backup
+        restore, or by a unit test exercising one backend's own semantics.
+        Wrapping those keeps the store's ~19 index call sites uniform instead of
+        making each one handle both shapes, and leaves the bytes where the
+        caller put them because the backend is adopted, not rebuilt.
+        """
+        router = cls(home, getattr(backend, "dim", 0),
+                     kind=getattr(backend, "kind", "brute"),
+                     ef_search=getattr(backend, "_ef_search", 64))
+        router._backends["default"] = backend
+        return router
+
+    def backend_for(self, tenant: str) -> "HnswlibIndex | BruteForceIndex":
+        """The tenant's backend, constructing it if this is the first request.
+
+        Read-only counterpart to `replace_backend`: callers that need to inspect
+        a backend's own attributes (`path`, `_deleted_path`) rather than the
+        router's aggregating view use this.
+        """
+        return self._get_backend_for_tenant(tenant)
+
+    def replace_backend(self, tenant: str, backend) -> None:
+        """Swap in a freshly built backend for a tenant.
+
+        Used by `rebuild_index`, which constructs the replacement itself so the
+        BUG-A1-12 scratch-then-publish ordering stays in one place. The previous
+        backend is dropped only after the new one is live, so a failure during
+        the build leaves the old index in place.
+        """
+        validate_tenant_id(tenant)
+        with self._lock:
+            self._backends[tenant] = backend
 
     def add(self, ids, vecs, tenant: str) -> None:
         backend = self._get_backend_for_tenant(tenant)

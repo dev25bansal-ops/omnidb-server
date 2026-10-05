@@ -3,6 +3,7 @@
 import sqlite3
 
 import pytest
+from conftest import make_index
 
 from omnidb_server import db as dbmod
 from omnidb_server.store import StoreError
@@ -10,12 +11,11 @@ from omnidb_server.store import StoreError
 
 def _open_brute(tmp_path):
     from omnidb_server.embeddings import HashingEmbedder
-    from omnidb_server.vector_index import BruteForceIndex
 
     cfg = _cfg(tmp_path)
     conn = dbmod.connect(tmp_path)
     emb = HashingEmbedder()
-    return _store(conn, emb, BruteForceIndex.load(tmp_path / "vectors.npz", emb.dim), cfg)
+    return _store(conn, emb, make_index(tmp_path, "brute", emb.dim), cfg)
 
 
 def _cfg(tmp_path, **extra):
@@ -181,7 +181,7 @@ def test_check_counts_soft_deleted_and_drift(store):
     assert report["soft_deleted"] == 1
     assert report["index_drift"] == 0  # forget removed it from the index too
     # simulate index drift without touching rows
-    store.index.remove([ids[1]])
+    store.index.remove([ids[1]], "default")
     assert store.check()["index_drift"] == 1
 
 

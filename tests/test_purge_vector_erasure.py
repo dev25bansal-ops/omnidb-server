@@ -27,7 +27,7 @@ import json
 import pathlib
 
 import pytest
-from conftest import make_store
+from conftest import make_index, make_store
 
 TOKEN = "hnsw-erasure-probe"
 
@@ -41,11 +41,11 @@ def hnsw_store(tmp_path):
     from omnidb_server.config import Config
     from omnidb_server.embeddings import HashingEmbedder
     from omnidb_server.store import MemoryStore
-    from omnidb_server.vector_index import HnswlibIndex
+    
 
     cfg = Config(home=tmp_path, embedder="hashing", vector_index="hnsw")
     conn = dbmod.connect(tmp_path)
-    index = HnswlibIndex(tmp_path / "index.hnsw", 512, count_hint=16)
+    index = make_index(tmp_path, "hnsw", 512, 16)
     st = MemoryStore(conn, HashingEmbedder(), index, cfg)
     try:
         yield st
@@ -87,7 +87,7 @@ def test_the_sidecar_shrinks_after_purge(hnsw_store, tmp_path):
     """
     mid = hnsw_store.remember(f"SECRET {TOKEN} content")["id"]
     hnsw_store.flush()
-    sidecar = tmp_path / "index.hnsw"
+    sidecar = tmp_path / "tenant-default.hnsw"
     before = sidecar.stat().st_size
 
     hnsw_store.forget(mid)

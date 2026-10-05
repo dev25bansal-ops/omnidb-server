@@ -1,6 +1,6 @@
 
 import pytest
-from conftest import make_store
+from conftest import make_index, make_store
 
 import omnidb_server.consolidate as consolidate
 from omnidb_server.store import StoreError
@@ -76,13 +76,13 @@ def test_llm_failure_does_not_consume_episodes(tmp_path, monkeypatch):
     from omnidb_server.config import Config
     from omnidb_server.embeddings import HashingEmbedder
     from omnidb_server.store import MemoryStore
-    from omnidb_server.vector_index import BruteForceIndex
+    
 
     cfg = Config(home=tmp_path, embedder="hashing", vector_index="brute",
                  llm_base_url="http://llm.local/v1", llm_model="m")
     conn = dbmod.connect(tmp_path)
     st = MemoryStore(conn, HashingEmbedder(),
-                     BruteForceIndex(tmp_path / "vectors.npz", 512), cfg)
+                     make_index(tmp_path, "brute", 512), cfg)
 
     def boom(*a, **k):
         raise RuntimeError("401 unauthorized")

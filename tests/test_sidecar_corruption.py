@@ -34,7 +34,7 @@ from omnidb_server.config import Config
 from omnidb_server.server import open_owned_store, open_read_only_store
 from omnidb_server.vector_index import BruteForceIndex, VectorIndexError
 
-SIDECAR = "vectors.npz"
+SIDECAR = "tenant-default.npz"
 
 
 def _seed(tmp_path: Path, n: int = 4) -> Config:

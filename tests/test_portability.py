@@ -34,7 +34,7 @@ def test_backup_snapshot_restores_and_reconciles_vectors(tmp_path):
         conn.close()
 
     # simulate the torn/stale sidecar copy the backup docstring warns about
-    (snap / "vectors.npz").unlink()
+    (snap / "tenant-default.npz").unlink()
 
     restored = tmp_path / "restored"
     shutil.copytree(snap, restored)
@@ -42,7 +42,7 @@ def test_backup_snapshot_restores_and_reconciles_vectors(tmp_path):
     try:
         assert st.stats()["live"] == 2
         vec = st.embedder.encode(["vector tuning guide"])[0]
-        assert {h[0] for h in st.index.query(vec, k=2)} == {a, b}
+        assert {h[0] for h in st.index.query(vec, 2, "default")} == {a, b}
         assert dbmod.get_meta(st.conn, "index_dirty") == "0"  # healed on open
     finally:
         st.close()

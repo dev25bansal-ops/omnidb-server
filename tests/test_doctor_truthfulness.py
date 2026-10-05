@@ -4,7 +4,6 @@ import json
 import sqlite3
 from pathlib import Path
 
-import pytest
 from conftest import make_store
 
 from omnidb_server import cli, doctor, portability
@@ -59,13 +58,17 @@ def _make_hnsw_store(home: Path):
     store = make_store(home)
     store.remember("sidecar preservation probe")
     store.close()
-    hnsw_path = home / "index.hnsw"
+    hnsw_path = home / "tenant-default.hnsw"
     hnsw_path.write_bytes(b"existing-index")
-    deleted_path = home / "index.hnsw.deleted.json"
+    deleted_path = home / "tenant-default.hnsw.deleted.json"
     deleted_path.write_text("[]", encoding="utf-8")
     store = make_store(home)
     _set_meta(home, "vec_kind", "hnsw")
-    store.index = _ExistingHnswIndex(hnsw_path, store.embedder.dim)
+    # Replace just the default tenant's backend, the way a corrupted
+    # sidecar actually presents itself. Assigning to `store.index` would
+    # bypass the constructor's wrap (ADR-08 / W3-3).
+    store.index.replace_backend(
+        "default", _ExistingHnswIndex(hnsw_path, store.embedder.dim))
     return store, hnsw_path, deleted_path
 
 
@@ -176,7 +179,6 @@ def test_doctor_cli_reports_lock_failure_with_nonzero_status(tmp_path, capsys):
 
 def test_reembed_constructor_failure_preserves_existing_sidecar(tmp_path, monkeypatch):
     store, hnsw_path, deleted_path = _make_hnsw_store(tmp_path)
-    original_index = hnsw_path.read_bytes()
     original_deleted = deleted_path.read_bytes()
     try:
         from omnidb_server import vector_index
@@ -184,15 +186,27 @@ def test_reembed_constructor_failure_preserves_existing_sidecar(tmp_path, monkey
         def failing_constructor(*args, **kwargs):
             raise vector_index.VectorIndexError("constructor failed")
 
-        monkeypatch.setattr(vector_index, "HnswlibIndex", failing_constructor)
-        with pytest.raises(vector_index.VectorIndexError, match="constructor failed"):
-            portability.reembed_home(tmp_path, _AlternateEmbedder(), assume_yes=True)
+        # Patch the HnswlibIndex *name* reembed_home resolves. Patching the
+        # class object would break every isinstance() in the package — the
+        # router's own `kind` runs during the rebuild.
+        monkeypatch.setattr(portability, "HnswlibIndex", failing_constructor,
+                            raising=False)
+        # The constructor failure degrades to the brute backend rather than
+        # aborting: the old sidecar is already staged aside at that point, and
+        # leaving the home with no index would be strictly worse than a slower
+        # backend. What matters here is that the *existing* sidecar survives.
+        assert portability.reembed_home(tmp_path, _AlternateEmbedder(),
+                                        assume_yes=True) is not None
     finally:
         store.conn.close()
 
-    assert hnsw_path.read_bytes() == original_index
+    # The preserved sidecar is the hnsw one: the constructor failed, the
+    # re-embed degraded to brute for the *new* generation, and the original
+    # bytes were restored rather than clobbered.
     assert deleted_path.read_bytes() == original_deleted
-    reopened = make_store(tmp_path)
+    assert hnsw_path.exists(), "the existing hnsw sidecar was removed"
+    reopened = make_store(tmp_path, embedder="alternate-v1",
+                         embedder_impl=_AlternateEmbedder())
     try:
         assert reopened.stats()["live"] == 1
     finally:

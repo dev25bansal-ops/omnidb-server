@@ -9,7 +9,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from conftest import make_store
+from conftest import make_index, make_store
 
 import omnidb_server.consolidate as consolidate
 from omnidb_server import cli
@@ -116,7 +116,7 @@ def _llm_store(tmp_path, **extra):
                  llm_base_url="http://llm.local/v1", llm_model="m", **extra)
     conn = dbmod.connect(tmp_path)
     return MemoryStore(conn, HashingEmbedder(),
-                       BruteForceIndex(tmp_path / "vectors.npz", 512), cfg)
+                       make_index(tmp_path, "brute", 512), cfg)
 
 
 def _fake_post(payload_json):
@@ -214,7 +214,7 @@ def test_backup_snapshot_is_consistent_and_openable(tmp_path):
     report = backup_home(st, backups)
     snap = Path(report["dest"])
     assert (snap / "omnidb.db").is_file()
-    assert "vectors.npz" in report["sidecars"]
+    assert "tenant-default.npz" in report["sidecars"]
 
     st.remember("post backup gamma")  # written after the snapshot
 
@@ -223,7 +223,7 @@ def test_backup_snapshot_is_consistent_and_openable(tmp_path):
     conn = dbmod.connect(snap)
     emb = HashingEmbedder()
     st2 = MemoryStore(conn, emb,
-                      BruteForceIndex.load(snap / "vectors.npz", emb.dim), cfg)
+                      BruteForceIndex.load(snap / "tenant-default.npz", emb.dim), cfg)
     assert st2.stats()["live"] == 2
     hits = st2.recall("backup probe", k=5)
     assert {h["content"] for h in hits} == {"backup probe alpha",
@@ -295,7 +295,7 @@ def test_reembed_migrates_identity_vectors_and_recall(tmp_path):
     assert get_meta(conn, "embedder") == "alt-v1"
     assert get_meta(conn, "vec_dim") == "64"
     st2 = MemoryStore(conn, alt,
-                      BruteForceIndex.load(tmp_path / "vectors.npz", alt.dim),
+                      make_index(tmp_path, "brute", alt.dim),
                       Config(home=tmp_path, embedder="hashing",
                              vector_index="brute"))
     hits = st2.recall("migration probe 3", k=3)

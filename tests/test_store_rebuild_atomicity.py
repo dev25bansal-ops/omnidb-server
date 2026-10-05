@@ -29,7 +29,7 @@ from omnidb_server import db as dbmod
 from omnidb_server.config import Config
 from omnidb_server.embeddings import HashingEmbedder
 from omnidb_server.store import MemoryStore
-from omnidb_server.vector_index import BruteForceIndex, HnswlibIndex
+from omnidb_server.vector_index import BruteForceIndex, open_vector_index
 
 
 def _brute_store(tmp_path):
@@ -42,7 +42,10 @@ def _hnsw_store(tmp_path):
     cfg = Config(home=tmp_path, embedder="hashing", vector_index="hnsw")
     conn = dbmod.connect(tmp_path)
     embedder = HashingEmbedder()
-    index = HnswlibIndex(tmp_path / "index.hnsw", embedder.dim, count_hint=0)
+    # Through open_vector_index, so the store holds the same per-tenant router
+    # shape production does (ADR-08 / W3-3). A hand-built HnswIndex would test
+    # a shape the server never constructs.
+    index = open_vector_index(tmp_path, "hnsw", embedder.dim, 0)
     return MemoryStore(conn, embedder, index, cfg)
 
 
@@ -62,7 +65,7 @@ def _snapshot(store, query: str = "atomic rebuild probe"):
     so the comparison is stable across an index rebuild."""
     vec = store.embedder.encode([query])[0]
     return sorted((int(mid), round(float(score), 6))
-                  for mid, score in store.index.query(vec, 10))
+                  for mid, score in store.index.query(vec, 10, "default"))
 
 
 # --- the live index is never mutated in place -------------------------------
@@ -77,10 +80,13 @@ def test_rebuild_builds_a_separate_object_and_swaps_only_on_success(tmp_path):
     st = _brute_store(tmp_path)
     try:
         _seed(st, 8)
-        before = st.index
+        before = st.index.backend_for("default")
         st.rebuild_index("swap test")
 
-        assert st.index is not before
+        assert st.index.backend_for("default") is not before, (
+            "rebuild must swap in a freshly constructed backend, not reuse the "
+            "one it replaced"
+        )
         assert st.index.indexed_ids() == _live_ids(st)
     finally:
         st.close()
@@ -108,7 +114,7 @@ def test_failure_mid_rebuild_leaves_the_previous_index_fully_usable(
         before_object = st.index
         before_answers = _snapshot(st)
         assert before_answers, "seed must produce a non-empty answer set"
-        canonical = tmp_path / "vectors.npz"
+        canonical = tmp_path / "tenant-default.npz"
         canonical_bytes = canonical.read_bytes()
 
         if fail_at == "encode":
@@ -164,7 +170,7 @@ def test_failed_rebuild_leaves_the_home_reopenable_with_every_row(tmp_path):
     st = _brute_store(tmp_path)
     ids = _seed(st, 4)
     st.flush()
-    canonical = tmp_path / "vectors.npz"
+    canonical = tmp_path / "tenant-default.npz"
     before = canonical.read_bytes()
 
     real_encode = st.embedder.encode
@@ -233,8 +239,8 @@ def test_hnsw_rebuild_repoints_the_tombstone_sidecar_to_the_canonical_name(
 
     Regression for a swap that updated `path` but left the tombstone sidecar
     pointing at the scratch file. `persist()` would then write deletions to
-    `index.hnsw.rebuilding.deleted.json` while the open path — which reads
-    only `index.hnsw.deleted.json` — resurrected every deleted row into
+    `tenant-default.hnsw.rebuilding.deleted.json` while the open path — which reads
+    only `tenant-default.hnsw.deleted.json` — resurrected every deleted row into
     dense results after a reopen. The tombstone sidecar is part of the
     published generation and must travel with the swap.
     """
@@ -243,17 +249,18 @@ def test_hnsw_rebuild_repoints_the_tombstone_sidecar_to_the_canonical_name(
         ids = _seed(st, 6)
         st.rebuild_index("tombstone swap")
 
-        assert st.index._deleted_path.name == "index.hnsw.deleted.json", (
+        backend = st.index.backend_for("default")
+        assert backend._deleted_path.name == "tenant-default.hnsw.deleted.json", (
             "the rebuilt index still writes tombstones to the scratch sidecar")
 
         st.forget_many(ids[:3])
         st.flush()
 
         published = json.loads(
-            (tmp_path / "index.hnsw.deleted.json").read_text())
+            (tmp_path / "tenant-default.hnsw.deleted.json").read_text())
         assert sorted(published) == sorted(ids[:3]), (
             "tombstones were not published under the canonical name")
-        assert not (tmp_path / "index.hnsw.rebuilding.deleted.json").exists()
+        assert not (tmp_path / "tenant-default.hnsw.rebuilding.deleted.json").exists()
     finally:
         st.close()
 
@@ -292,10 +299,10 @@ def test_successful_rebuild_leaves_the_canonical_sidecar_loadable(tmp_path):
     try:
         ids = _seed(st, 5)
         st.rebuild_index("publish")
-        assert st.index.path == tmp_path / "vectors.npz"
+        assert st.index.backend_for("default").path == tmp_path / "tenant-default.npz"
         assert not (tmp_path / "vectors.npz.rebuilding").exists()
 
-        reloaded = BruteForceIndex.load(tmp_path / "vectors.npz",
+        reloaded = BruteForceIndex.load(tmp_path / "tenant-default.npz",
                                         st.embedder.dim)
         assert reloaded.indexed_ids() == set(ids)
     finally:
@@ -315,10 +322,10 @@ def test_rebuild_verifies_before_swapping_in_a_complete_index(tmp_path):
         ids = _seed(st, 12)
         st.rebuild_index("verify before swap")
 
-        assert st.index.indexed_ids() == set(ids)
-        assert st.index.active_count() == len(ids)
+        assert st.index.indexed_ids("default") == set(ids)
+        assert st.index.active_count("default") == len(ids)
         vec = st.embedder.encode(["atomic rebuild probe 3"])[0]
-        answered = {mid for mid, _ in st.index.query(vec, 50)}
+        answered = {mid for mid, _ in st.index.query(vec, 50, "default")}
         assert answered == set(ids)
     finally:
         st.close()
@@ -354,7 +361,7 @@ def test_rebuild_publishes_a_fully_built_scratch_artifact(
     try:
         ids = _seed(st, 5)
         st.flush()
-        canonical = tmp_path / "vectors.npz"
+        canonical = tmp_path / "tenant-default.npz"
         sources: list[set[int]] = []
         real_replace = os.replace
 

@@ -1,4 +1,5 @@
 import pytest
+from conftest import make_index
 
 from omnidb_server.store import StoreError
 
@@ -96,13 +97,13 @@ def test_search_truncation(tmp_path):
     from omnidb_server.config import Config
     from omnidb_server.embeddings import HashingEmbedder
     from omnidb_server.store import MemoryStore
-    from omnidb_server.vector_index import BruteForceIndex
+    
 
     cfg = Config(home=tmp_path, embedder="hashing", vector_index="brute",
                  max_search_rows=3)
     conn = dbmod.connect(tmp_path)
     st = MemoryStore(conn, HashingEmbedder(),
-                     BruteForceIndex(tmp_path / "vectors.npz", 512), cfg)
+                     make_index(tmp_path, "brute", 512), cfg)
     out = st.search(
         "WITH RECURSIVE cnt(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM cnt WHERE x<10) "
         "SELECT x FROM cnt"

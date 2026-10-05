@@ -102,7 +102,8 @@ def test_single_tenant_still_sees_the_sidecars(two_tenants):
     """
     two_tenants.flush()
     listed = two_tenants.stats(tenant="default")["files"]
-    assert any("vectors" in name or "index.hnsw" in name for name in listed), listed
+    # ADR-08 / W3-3: sidecars are per-tenant now, named tenant-<id>.<suffix>.
+    assert any(name.startswith("tenant-") for name in listed), listed
 
 
 def test_file_sizes_are_not_reported_per_tenant(two_tenants):

@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 
 import pytest
-from conftest import make_store
+from conftest import make_index, make_store
 
 from omnidb_server import cli
 from omnidb_server import db as dbmod
@@ -14,7 +14,6 @@ from omnidb_server.config import Config
 from omnidb_server.embeddings import HashingEmbedder
 from omnidb_server.portability import export_jsonl
 from omnidb_server.store import MemoryStore
-from omnidb_server.vector_index import BruteForceIndex
 
 # --- J-01: --version -------------------------------------------------------
 
@@ -73,12 +72,11 @@ def test_j04_reconciled_at_only_set_on_recovery(tmp_path):
     from omnidb_server.db import get_meta
     from omnidb_server.embeddings import HashingEmbedder
     from omnidb_server.store import MemoryStore
-    from omnidb_server.vector_index import BruteForceIndex
 
     cfg = Config(home=tmp_path, embedder="hashing", vector_index="brute")
     conn = dbmod.connect(tmp_path)
     st = MemoryStore(conn, HashingEmbedder(),
-                     BruteForceIndex(tmp_path / "vectors.npz", 512), cfg)
+                     make_index(tmp_path, "brute", 512), cfg)
     # fresh open with no rows: no recovery, reconciled_at stays None
     assert get_meta(conn, "reconciled_at") is None
     st.close()
@@ -86,7 +84,7 @@ def test_j04_reconciled_at_only_set_on_recovery(tmp_path):
     # reopen still nothing to recover
     conn2 = dbmod.connect(tmp_path)
     st2 = MemoryStore(conn2, HashingEmbedder(),
-                      BruteForceIndex(tmp_path / "vectors.npz", 512), cfg)
+                      make_index(tmp_path, "brute", 512), cfg)
     assert get_meta(conn2, "reconciled_at") is None
     st2.close()
 
@@ -281,7 +279,7 @@ def test_remember_many_collapses_writes_to_one_commit(tmp_path):
     cfg = Config(home=tmp_path, embedder="hashing", vector_index="brute")
     conn = dbmod.connect(tmp_path)
     st = MemoryStore(conn, HashingEmbedder(),
-                     BruteForceIndex(tmp_path / "vectors.npz", 512), cfg)
+                     make_index(tmp_path, "brute", 512), cfg)
     N = 50
     items = [{"content": f"batch item {i} unique-token-{i}"} for i in range(N)]
     t0 = time.perf_counter()
@@ -310,7 +308,7 @@ def test_home_lock_acquire_then_second_open_fails(tmp_path, monkeypatch):
     cfg = Config(home=tmp_path, embedder="hashing", vector_index="brute")
     conn = dbmod.connect(tmp_path)
     emb = HashingEmbedder()
-    idx = BruteForceIndex(tmp_path / "vectors.npz", emb.dim)
+    idx = make_index(tmp_path, "brute", emb.dim)
     st1 = MemoryStore(conn, emb, idx, cfg)
 
     from omnidb_server.server import _acquire_home_lock, _release_home_lock

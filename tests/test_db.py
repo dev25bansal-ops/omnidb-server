@@ -4,7 +4,6 @@ from omnidb_server import db as dbmod
 from omnidb_server.config import Config
 from omnidb_server.embeddings import HashingEmbedder
 from omnidb_server.store import MemoryStore, StoreError
-from omnidb_server.vector_index import BruteForceIndex
 
 
 def test_wal_mode(store):
@@ -54,7 +53,7 @@ def test_meta_roundtrip(store):
 
 
 def test_embedder_mismatch_rejected(tmp_path):
-    from conftest import make_store
+    from conftest import make_index, make_store
 
     st = make_store(tmp_path)
     st.remember("hello world")
@@ -69,7 +68,7 @@ def test_embedder_mismatch_rejected(tmp_path):
 
     cfg = Config(home=tmp_path, embedder="hashing", vector_index="brute")
     conn = dbmod.connect(tmp_path)
-    index = BruteForceIndex(tmp_path / "vectors.npz", 384)
+    index = make_index(tmp_path, "brute", 384)
     with pytest.raises(StoreError):
         MemoryStore(conn, WrongDim(), index, cfg)
     conn.close()
@@ -77,20 +76,24 @@ def test_embedder_mismatch_rejected(tmp_path):
 
 def test_hnsw_roundtrip_and_reopen(tmp_path):
     pytest.importorskip("hnswlib")
-    from conftest import make_store
-
-    from omnidb_server.vector_index import HnswlibIndex
+    from conftest import make_index, make_store
 
     emb = HashingEmbedder()
     st = make_store(tmp_path)
     # swap in an hnsw-backed store on the same database
-    idx = HnswlibIndex(tmp_path / "index.hnsw", emb.dim)
+    idx = make_index(tmp_path, "hnsw", emb.dim)
     st.index = idx
+    # ADR-08 / W3-3: `vec_kind` is what the next open reads to pick a backend, so
+    # assigning a different backend must record it — otherwise the reopen
+    # requests the old kind and correctly refuses on a mismatch.
+    from omnidb_server.db import set_meta
+    set_meta(st.conn, "vec_kind", idx.configured_kind)
     mid = st.remember("kubernetes ingress controller setup")["id"]
     st.close()
 
-    reopened = HnswlibIndex(tmp_path / "index.hnsw", emb.dim, count_hint=10)
-    assert reopened.count >= 1
+    reopened = make_index(tmp_path, "hnsw", emb.dim, 10)
+    # The router aggregates; `.count` is a single backend's attribute.
+    assert reopened.backend_for("default").count >= 1
     st2 = make_store(tmp_path)
     st2.index = reopened
     hits = st2.recall("kubernetes ingress", k=3)

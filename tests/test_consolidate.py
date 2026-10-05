@@ -1,6 +1,6 @@
 import json
 
-from conftest import make_store
+from conftest import make_index, make_store
 
 import omnidb_server.consolidate as consolidate
 
@@ -47,12 +47,12 @@ def test_llm_consolidation_path(tmp_path, monkeypatch):
     from omnidb_server.config import Config
     from omnidb_server.embeddings import HashingEmbedder
     from omnidb_server.store import MemoryStore
-    from omnidb_server.vector_index import BruteForceIndex
+    
 
     cfg = Config(home=tmp_path, embedder="hashing", vector_index="brute", **cfg_kwargs)
     conn = dbmod.connect(tmp_path)
     st = MemoryStore(conn, HashingEmbedder(),
-                     BruteForceIndex(tmp_path / "vectors.npz", 512), cfg,
+                     make_index(tmp_path, "brute", 512), cfg,
                      now_fn=lambda: clock["t"])
 
     _seed_episodes(st, clock, n=3)

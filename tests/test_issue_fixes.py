@@ -4,7 +4,7 @@ import hashlib
 
 import numpy as np
 import pytest
-from conftest import make_store
+from conftest import make_index, make_store
 
 from omnidb_server import db as dbmod
 from omnidb_server.config import Config, ConfigError
@@ -14,12 +14,11 @@ from omnidb_server.store import MemoryStore, StoreError
 
 
 def _open_brute(tmp_path):
-    from omnidb_server.vector_index import BruteForceIndex
     cfg = Config(home=tmp_path, embedder="hashing", vector_index="brute")
     conn = dbmod.connect(tmp_path)
     emb = HashingEmbedder()
     return MemoryStore(conn, emb,
-                       BruteForceIndex.load(tmp_path / "vectors.npz", emb.dim), cfg)
+                       make_index(tmp_path, "brute", emb.dim), cfg)
 
 
 # --- I-02: batched persistence + crash-window recovery (I-08) --------------
@@ -58,10 +57,9 @@ def test_clean_open_skips_reconciliation(tmp_path):
 
 def test_compaction_scheduled_then_rebuilt_on_open(tmp_path):
     pytest.importorskip("hnswlib")
-    from omnidb_server.vector_index import HnswlibIndex
 
     st = make_store(tmp_path)
-    st.index = HnswlibIndex(tmp_path / "index.hnsw", 512)
+    st.index = make_index(tmp_path, "hnsw", 512)
     for i in range(12):
         st.remember(f"compaction filler entry {i}")
     st.forget_many(list(range(1, 4)))  # 3/12 dead = 25% >= threshold
@@ -80,12 +78,14 @@ def test_compaction_scheduled_then_rebuilt_on_open(tmp_path):
 
 def _open_hnsw(tmp_path):
     pytest.importorskip("hnswlib")
-    from omnidb_server.vector_index import HnswlibIndex
     cfg = Config(home=tmp_path, embedder="hashing", vector_index="hnsw")
     conn = dbmod.connect(tmp_path)
     emb = HashingEmbedder()
-    idx = HnswlibIndex(tmp_path / "index.hnsw", emb.dim,
-                       count_hint=int(conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0]))
+    from conftest import make_index
+
+    idx = make_index(
+        tmp_path, "hnsw", emb.dim,
+        count_hint=int(conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0]))
     return MemoryStore(conn, emb, idx, cfg)
 
 
@@ -95,7 +95,7 @@ def test_stats_includes_sidecars_and_ratio(store):
     store.remember("sidecar size probe")
     store.flush()
     stats = store.stats()
-    assert "vectors.npz" in stats["files"]
+    assert "tenant-default.npz" in stats["files"]
     assert stats["index"]["dead_ratio"] == 0.0
     assert stats["took_ms"] >= 0
     assert stats["pending_compaction"] is False
@@ -234,13 +234,12 @@ def test_consolidation_validates_llm_output(tmp_path, monkeypatch):
     import omnidb_server.consolidate as consolidate
     from omnidb_server.config import Config
     from omnidb_server.embeddings import HashingEmbedder
-    from omnidb_server.vector_index import BruteForceIndex
 
     cfg = Config(home=tmp_path, embedder="hashing", vector_index="brute",
                  llm_base_url="http://llm.local/v1", llm_model="m")
     conn = dbmod.connect(tmp_path)
     st = MemoryStore(conn, HashingEmbedder(),
-                     BruteForceIndex(tmp_path / "vectors.npz", 512), cfg)
+                     make_index(tmp_path, "brute", 512), cfg)
     for i in range(3):
         st.remember(f"episode {i}", kind="episodic")
 

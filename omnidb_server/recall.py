@@ -100,7 +100,11 @@ def run_recall(store, query: str, k: int, kind, k_fetch,
         # below k; the cap keeps the placeholder count bounded.
         fetch = min(_MAX_RECALL_K, int(fetch * store.cfg.agent_overfetch))
     qvec = store.embedder.encode([query])[0]
-    dense_ids = [mid for mid, _score in store.index.query(qvec, fetch)]
+    # ADR-08 / W3-3: the dense leg is tenant-scoped at the index, not
+    # global-ANN-then-filter. Its postings live in the tenant's own sidecar,
+    # so a foreign row is never a candidate and `fetch` is spent entirely on
+    # this tenant's rows.
+    dense_ids = [mid for mid, _score in store.index.query(qvec, fetch, tenant)]
 
     # ADR-08: tenant is fenced first — every candidate is narrowed to the
     # tenant's own rows before kind or agent scoping, so a foreign tenant's row

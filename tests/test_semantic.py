@@ -8,12 +8,12 @@ which the hashing embedder cannot match — this gate proves real semantics.
 import os
 
 import pytest
+from conftest import make_index
 
 from omnidb_server import db as dbmod
 from omnidb_server.config import Config
 from omnidb_server.embeddings import FastEmbedEmbedder
 from omnidb_server.store import MemoryStore
-from omnidb_server.vector_index import BruteForceIndex
 
 
 @pytest.mark.skipif(
@@ -24,7 +24,7 @@ def test_fastembed_paraphrase_recall(tmp_path):
     embedder = FastEmbedEmbedder()  # BAAI/bge-small-en-v1.5, 384-dim
     cfg = Config(home=tmp_path, embedder="fastembed", vector_index="brute")
     conn = dbmod.connect(tmp_path)
-    store = MemoryStore(conn, embedder, BruteForceIndex(tmp_path / "vectors.npz", embedder.dim), cfg)
+    store = MemoryStore(conn, embedder, make_index(tmp_path, "brute", embedder.dim), cfg)
 
     store.remember("Python developers often use virtual environments to isolate project dependencies")
     store.remember("The chef prepared a delicious pasta dish garnished with fresh basil")

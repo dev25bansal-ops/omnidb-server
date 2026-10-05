@@ -2,9 +2,9 @@
 
 The original four bypasses were recorded as `xfail(strict=True)` under the name
 MT-06, when `agent_id` was held to be the boundary. ADR-08 replaced `agent_id`
-with an authenticated `tenant`, and three of the four are now enforced by the
-store. The fourth — a single shared vector sidecar per home — still awaits the
-per-tenant HNSW work (W3-3's remaining half), and stays xfail until then.
+with an authenticated `tenant`, and all four are now enforced by the store — the
+last, a single shared vector sidecar per home, closed when per-tenant sidecars
+landed in W3-3. There are no xfails left in this module.
 """
 
 from __future__ import annotations
@@ -73,23 +73,20 @@ def _exposed_stats_via_tool(store, tenant="default"):
     return store.stats(tenant)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "MT-06 (remaining): per-tenant vector sidecars. The dense leg is fenced "
-        "in recall, and the sidecar is only reachable by a co-located filesystem "
-        "actor, not by a tenant — but the vectors still live in one shared file, "
-        "so a tenant with filesystem access to the home can read every tenant's "
-        "embeddings at rest. Closes when per-tenant HNSW/BruteForce sidecars land."
-    ),
-)
 def test_vector_sidecar_exposes_only_requesting_tenants_vectors(tenancy_store):
+    """Per-tenant sidecars: a tenant's file holds only that tenant's vectors.
+
+    This was `xfail(strict=True)` from MT-06 onwards — "Closes when per-tenant
+    HNSW/BruteForce sidecars land". ADR-08 / W3-3 landed them, so the marker is
+    gone and the assertion is now enforced rather than documented as a known
+    gap. `tests/test_per_tenant_vector_sidecars.py` covers the same property
+    across rename, reconciliation and reporting.
+    """
     tenant_a = tenancy_store.remember("acme vector", tenant="acme")["id"]
     tenancy_store.remember("globex vector", tenant="globex")
     tenancy_store.flush()
-    sidecar = tenancy_store.index.path
 
-    with np.load(sidecar) as data:
+    with np.load(tenancy_store._home() / "tenant-acme.npz") as data:
         persisted_ids = {int(m) for m in data["ids"]}
 
     assert persisted_ids == {tenant_a}
