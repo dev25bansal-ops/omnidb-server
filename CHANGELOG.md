@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Graph retrieval leg (`omnidb_server.graph_leg` + `store.graph_ranking` + the
+  recall fusion branch): a bounded, both-endpoints-fenced adjacency expansion
+  feeds a max-discounted-path ranking, fused as a third RRF leg. Ships off
+  (`graph_weight=0.0`); measured a threshold switch — nothing below ~0.2, 8
+  rows/query at 0.875 precision at 0.3 on a synthetic topic-clustered corpus.
+- Unified query surface: `MemoryStore.query(spec)` and the MCP `query` tool
+  return one ranked list from all four capabilities in one call; rows carry
+  `sources` provenance; a spec smuggling `tenant` is rejected.
+- Mutation-gate coverage for `graph_leg.py` (8 mutants; 100% killed-or-equivalent).
 
 - Tenant observability for operators: `MemoryStore.tenants()` returns the home's full tenant roster with live/soft-deleted/superseded/total counts and per-kind breakdown. `omnidb-server tenants` exposes it as a read-only CLI command; this is the single-tenant-operator view, deliberately not an MCP tool (scoped tenants cannot enumerate other tenants via the server).
 - Multi-tenant streamable-HTTP transport: `omnidb-server serve-http` plus a

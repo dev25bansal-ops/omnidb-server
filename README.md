@@ -66,6 +66,7 @@ override so the ~100MB model downloads once and never again. Minimal version:
 | `search(sql)` | read-only SELECT/WITH escape hatch against SQLite |
 | `schema()` | tables, column notes, and copy-runnable example queries for `search` |
 | `related(memory_id, max_hops, label)` | undirected graph walk (recursive CTE, cycle-safe, hops clamped 1-8) |
+| `query(spec, k)` | **the unified surface**: one ranked list from all four capabilities in one call. spec keys: `text`/`semantic` (dense+lexical query), `graph_from` (memory id to traverse from), `graph` `{hops, from}`, `kind`, `agent_id`, `filter_metadata` (exact equality), `min_score`. Every row carries `sources` naming its contributing legs. Tenant always comes from the auth context; a spec smuggling `tenant` is rejected. |
 | `forget(memory_id)` / `forget_many(ids)` | soft delete one / many |
 | `consolidate(hours)` | episodic → semantic distillation |
 | `stats()` | counts, edges, embedder/index info, dead-ratio, all file sizes |
@@ -125,6 +126,9 @@ single-tenant stdio runs as the implicit `default` tenant. See
 | `OMNIDB_K_FETCH` | `50` | candidates fetched from each retrieval leg (dense + sparse) before fusion pool ceiling. |
 | `OMNIDB_RRF_K` | `60` | reciprocal rank fusion k smoothing constant (Cormack et al. 2009). Larger = softer rank penalty. Measured optimal dense_weight varies by dataset (0.7 on nfcorpus; ≤0.3 on scifact/scidocs) — corpus-dependent. |
 | `OMNIDB_DENSE_WEIGHT` / `OMNIDB_SPARSE_WEIGHT` | `0.7` / `0.3` | dense/sparse leg weights passed to RRF; sum not required to be 1 but equal weights are classical. Tuned by corpus; default favors semantic over lexical. |
+| `OMNIDB_GRAPH_WEIGHT` | `0.0` | third RRF leg weight for the graph leg. `0.0` = off (the leg is never computed). Ships off — measured: on a synthetic topic-clustered corpus the leg is a threshold switch, adding nothing below ~0.2 and 8 rows/query at 0.875 precision at 0.3. The cliff is corpus-dependent, so no universal default. Enforced: must be ≤ dense_weight + sparse_weight. |
+| `OMNIDB_GRAPH_DECAY` | `0.5` | per-hop discount for the graph leg. NOT 1−d: with a hard pop budget the *budget* should be the binding constraint, and at 1−d=0.15 a 3-hop node carries 0.0034 against a 1-hop node's 0.15 — a decorative tail. graph_decay and graph_expand_budget are one tuning surface. |
+| `OMNIDB_GRAPH_EXPAND_BUDGET` | `0` | pop cap for the graph leg. `0` = derive from k. Flat in graph size by construction, which is what makes the leg affordable where whole-graph PPR was not (9.26 s at 200k nodes vs ~0.002 s here). |
 | `OMNIDB_CORPUS_MODE` | `False` | behavior-changing: zeroes both recency/frequency weights, making retrieval pure fusion of dense + sparse — useful only for corpus workloads where memories share near-identical age/access patterns. For standard agent memory workloads, keep `False`. Measured impact: loses 40-56% nDCG@10 vs its own rerank-off path on BEIR benchmarks. |
 | `OMNIDB_EF_SEARCH` | `128` | HNSW search parameter (number of dynamic neighbors). Higher improves recall at cost of latency. Default 128 justified by measured gains (+0.193 recall@10 @ 10k/384d; +0.117 @ 100k/768d; worst-case p50 <1ms). Minimum enforced is 16. Full sweep measured in `bench/results.md`. |
 | `OMNIDB_AGENT_OVERFETCH` | `3.0` | global-overfetch multiplier when `agent_id` scoped recall uses the dense leg (global-ANN then filter). Raises candidate budget proportionally so dominant agents don't crowd scoped recalls below `k`. Valid >=1.0. |
