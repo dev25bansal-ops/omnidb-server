@@ -10,6 +10,7 @@ These run with no database. Everything here is a property of
 from __future__ import annotations
 
 import math
+import pathlib
 
 import pytest
 from hypothesis import given, settings
@@ -274,3 +275,50 @@ def test_never_raises_on_any_graph(adj):
     adjacency = {k: set(v) for k, v in adj.items()}
     out = graph_expand({0: 1.0}, adjacency, decay=0.5, budget=50)
     assert isinstance(out, list)
+
+# --- config: the safety property is enforced, not defaulted ------------------
+
+def test_graph_weight_cannot_exceed_the_legs_it_is_seeded_from():
+    """A graph-only row must never outrank the rows that produced the seeds.
+
+    The graph leg's ranking is a function of the fused seed set, so an
+    unbounded weight would let a derived signal outvote the evidence it was
+    derived from. Checked at config validation, so it holds for an operator who
+    overrides the default as well as for one who does not.
+    """
+    import tempfile
+
+    from omnidb_server.config import Config, ConfigError
+
+    with tempfile.TemporaryDirectory() as d:
+        toml = pathlib.Path(d) / "omnidb.toml"
+        toml.write_text("graph_weight = 5.0\n", encoding="utf-8")
+        with pytest.raises(ConfigError, match="graph_weight"):
+            Config.load(pathlib.Path(d))
+
+
+def test_a_zero_graph_weight_leaves_every_existing_config_untouched():
+    """The default must be inert: no existing home or caller changes."""
+    from omnidb_server.config import Config
+
+    cfg = Config(home=pathlib.Path("/tmp"))
+    assert cfg.graph_weight == 0.0, "the graph leg must ship off"
+    assert cfg.graph_decay == 0.5
+    assert cfg.graph_expand_budget == 0
+
+
+def test_graph_expand_budget_rejects_a_typo_below_the_floor():
+    """0 means "derive from k"; a small non-zero is a different mistake.
+
+    The error must name both meanings, or an operator who writes 8 has to go
+    read the source to learn why it was refused.
+    """
+    import tempfile
+
+    from omnidb_server.config import Config, ConfigError
+
+    with tempfile.TemporaryDirectory() as d:
+        pathlib.Path(d, "omnidb.toml").write_text("graph_expand_budget = 4\n",
+                                                  encoding="utf-8")
+        with pytest.raises(ConfigError, match="derive from k"):
+            Config.load(pathlib.Path(d))

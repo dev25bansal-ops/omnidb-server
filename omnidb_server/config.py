@@ -151,6 +151,29 @@ class Config:
     rrf_k: int = 60
     dense_weight: float = 0.7
     sparse_weight: float = 0.3
+    # --- graph leg (ADR-08 / W3-3) ---------------------------------------
+    # RRF weight of the graph leg, and its only off-switch: 0.0 means the leg
+    # is never computed -- not "computed then discarded". There is deliberately
+    # no separate `graph_enabled` flag: a boolean and a weight are two sources
+    # of truth that can disagree and produce silently dead config.
+    #
+    # Ships at 0.0 because the weight is UNMEASURED. `dense_weight=0.7` is
+    # justified by a measured nfcorpus sweep, and rrf()'s own docstring says
+    # to treat weights as a per-deployment surface with no universal default. The
+    # graph leg's ranking is a function of the fused seeds, so an unmeasured
+    # non-zero default would compound an unmeasured assumption into every
+    # result. bench/graph_weight_sweep.py is what would earn a non-zero value.
+    graph_weight: float = 0.0
+    # Per-hop discount. NOT 1-d: with a hard pop budget the budget should be
+    # the binding constraint, and at decay=0.15 a 3-hop node carries 0.0034
+    # against a 1-hop node's 0.15 — a decorative tail. 0.5 keeps a 4-hop node
+    # competitive at k=5..10. graph_decay and graph_expand_budget are one
+    # tuning surface: changing the budget without the decay silently changes
+    # what the leg means.
+    graph_decay: float = 0.5
+    # Pop cap. 0 derives it from k. Flat in graph size by construction, which
+    # is what makes the leg affordable where whole-graph PPR was not.
+    graph_expand_budget: int = 0
     k_fetch: int = 50
     max_search_rows: int = 500
     persist_every_ops: int = 64
@@ -314,6 +337,13 @@ def _validate_config(cfg: "Config") -> None:
     checks: list[tuple[str, bool, str]] = [
         ("k_fetch", cfg.k_fetch >= 1, "must be >= 1"),
         ("rrf_k", cfg.rrf_k >= 1, "must be >= 1"),
+        ("graph_weight", cfg.graph_weight >= 0.0, "must be >= 0"),
+        ("graph_decay", 0.0 < cfg.graph_decay <= 1.0, "must be in (0, 1]"),
+        # 0 carries a DIFFERENT meaning from small non-zero, so the message
+        # names both: a typo should be diagnosable from the error alone.
+        ("graph_expand_budget",
+         cfg.graph_expand_budget == 0 or 32 <= cfg.graph_expand_budget <= 8192,
+         "must be 0 (derive from k) or in [32, 8192]"),
         ("max_search_rows", cfg.max_search_rows >= 1, "must be >= 1"),
         ("persist_every_ops", cfg.persist_every_ops >= 1, "must be >= 1"),
         ("persist_every_s", cfg.persist_every_s > 0, "must be > 0"),
@@ -335,5 +365,20 @@ def _validate_config(cfg: "Config") -> None:
     if bad:
         name, rule = bad[0]
         raise ConfigError(f"config value {name} {rule} (got {getattr(cfg, name)!r})")
+    # The graph leg must stay a structural minority vote. Its ranking is a
+    # function of the fused seeds, so its own contribution to any row is
+    # bounded by graph_weight/(rrf_k+1) while the two legs it is seeded from
+    # contribute up to (dense_weight + sparse_weight)/(rrf_k+1). Capping it at
+    # that sum means a graph-only row can never become the dominant term for
+    # any row -- the leg can expand the candidate set, not outvote its own
+    # seeds. Enforced here rather than left to the default, because the default
+    # is exactly the kind of thing an operator overrides.
+    if cfg.graph_weight > cfg.dense_weight + cfg.sparse_weight:
+        raise ConfigError(
+            "config value graph_weight must be <= dense_weight + sparse_weight "
+            f"({cfg.graph_weight!r} > {cfg.dense_weight + cfg.sparse_weight!r}): "
+            "a graph-only row would otherwise outrank the rows it was seeded "
+            "from"
+        )
     # SEC-A3-05: last, so a typo in a numeric field is still reported first.
     _validate_llm_base_url(cfg.llm_base_url)
