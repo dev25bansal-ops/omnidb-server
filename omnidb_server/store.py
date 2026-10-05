@@ -257,6 +257,9 @@ class MemoryStore:
         # instead of only on stderr, so a caller that cannot see stderr can
         # still tell an empty home from a broken index.
         self.index_degraded_reason: str | None = None
+        # Provenance for the unified surface: which ids the graph leg last
+        # surfaced during recall, so query() can annotate without a second run.
+        self.graph_leg_last: list[int] = []
         # AUDIT-I05: the budget is VM instructions, not progress callbacks;
         # the handler divides it by its callback interval below.
         self.max_query_steps = 5_000_000
@@ -998,6 +1001,167 @@ class MemoryStore:
         return _row_to_dict(row) if row else None
 
     @_serialized
+    def query(self, spec: dict | None = None, *,
+              k: int = 5, tenant: str = "default", kind: str | None = None,
+              agent_id: str | None = None, max_hops: int = 2,
+              min_score: float | None = None,
+              filter_metadata: dict | None = None,
+              text: str | None = None, semantic: str | None = None,
+              graph_from: int | None = None) -> list[dict]:
+        """One ranked result from all four capabilities (the unified surface).
+
+        Reaches the graph by *content* rather than id, and returns one ranked
+        list rather than four result sets the agent must merge itself.
+
+        Spec keys, matching what an agent will actually want to express:
+          text / semantic   lexical + dense query text (aliases in v1)
+          graph_from        a memory id to start traversing from, instead of
+                            seeding from the fused text ranking
+          kind / agent_id   relational filters (the existing vocabulary)
+          filter_metadata   exact metadata equality, JSON-object only
+          min_score         post-filter on the final score
+
+        The tenant fence holds here exactly as on every other tool: `tenant` is
+        an internal keyword set by the server from the auth context, and the
+        spec must NOT carry a tenant key. A hallucinated `tenant` is rejected
+        loudly -- the structural twin of the no-tenant-argument invariant that
+        tenancy_tool_surface tests enforce on the MCP signatures.
+        """
+        if spec is None:
+            spec = {}
+        if not isinstance(spec, dict):
+            raise StoreError("query spec must be a dict", E_TYPE)
+        if "tenant" in spec or "tenant_id" in spec:
+            raise StoreError(
+                "query spec must not contain a tenant key; the tenant comes "
+                "from the authenticated request, never from the query",
+                E_TYPE)
+
+        text = spec.get("text") or text
+        semantic = spec.get("semantic") or semantic
+        graph_from = spec.get("graph_from") if spec.get("graph_from") is not None else graph_from
+        if spec.get("kind") is not None:
+            kind = spec["kind"]
+        if spec.get("agent_id") is not None:
+            agent_id = spec["agent_id"]
+        if spec.get("max_hops") is not None:
+            max_hops = int(spec["max_hops"])
+        graph_spec = spec.get("graph")
+        if isinstance(graph_spec, dict):
+            max_hops = int(graph_spec.get("hops", max_hops))
+            # graph_from is the seed override when the caller knows the id
+            # explicitly; {"graph": {"hops": N}} alone means "seed from text".
+            if graph_from is None and graph_spec.get("from") is not None:
+                graph_from = int(graph_spec["from"])
+        if spec.get("min_score") is not None:
+            min_score = float(spec["min_score"])
+        if spec.get("filter_metadata") is not None:
+            filter_metadata = spec["filter_metadata"]
+
+        if not (text or semantic or graph_from):
+            raise StoreError(
+                "query spec must include at least one of text, semantic, or "
+                "graph_from; an empty query would silently return an arbitrary "
+                "result set", E_TYPE)
+
+        from .recall import run_recall
+
+        if text or semantic:
+            # The hybrid path. One string in v1: if the caller gave only
+            # `semantic`, route through recall with that text; otherwise `text`
+            # drives the lexical leg. Splitting the two strings is a later
+            # refinement -- forcing the distinction now would be a contract the
+            # agent cannot actually distinguish from its own inputs.
+            effective_query = str(text or semantic or "").strip()
+            results = run_recall(self, effective_query, k, kind, None, agent_id,
+                                 None, log_query=self._query_log_enabled,
+                                 tenant=tenant, max_hops=max_hops)
+            # Graph participation: run_recall already fused the graph leg when
+            # graph_weight > 0. If the caller asked for graph reachability via
+            # the spec, we additionally ANNOTATE which rows came via graph.
+            # This is provenance, not result-surgery.
+            self._annotate_sources(results, tenant=tenant)
+        else:
+            # Graph-only: no text to embed, so traverse from the known id.
+            assert graph_from is not None, "guarded above: no text implies graph_from"
+            results = self._graph_only_query(
+                graph_from, k=k, kind=kind, agent_id=agent_id, tenant=tenant,
+                max_hops=max_hops)
+            self._annotate_sources(results, tenant=tenant, graph_only=True)
+
+        if min_score is not None:
+            results = [r for r in results
+                       if r.get("score", float("-inf")) >= min_score]
+        if filter_metadata:
+            results = [
+                r for r in results
+                if all(self._metadata_matches(r.get("metadata"), k_, v)
+                       for k_, v in filter_metadata.items())
+            ]
+        return results[:k] if len(results) > k else results
+
+    def _annotate_sources(self, results: list[dict], *,
+                          tenant: str = "default",
+                          graph_only: bool = False) -> None:
+        """Add `sources` to each row, naming the legs that could have found it.
+
+        Provenance is a correctness feature: without it a graph-surfaced row is
+        indistinguishable from a ranking bug. The annotation is additive and
+        never affects ordering or filtering.
+        """
+        graph_ids: set[int] = set()
+        if graph_only:
+            graph_ids = {r["id"] for r in results}
+        else:
+            # Cheap reconstruction of which rows the text legs and the graph
+            # leg each produced, from the same fenced data the recall used.
+            # This deliberately does not re-run the query: it answers "which
+            # legs contributed" with the data already in hand.
+            try:
+                graph_ids = set(self.graph_leg_last or ())
+            except AttributeError:
+                graph_ids = set()
+        for r in results:
+            sources = []
+            if r["id"] in graph_ids:
+                sources.append("graph")
+            # A row that came back through recall necessarily passed the text
+            # legs or the graph leg; be honest about what we know.
+            if r["id"] not in graph_ids and r.get("score") is not None:
+                sources.append("text")
+            if not sources:
+                sources.append("unknown")
+            r["sources"] = sources
+
+    def _metadata_matches(self, metadata, key: str, value) -> bool:
+        """Exact equality on one metadata key, tolerant of non-object metadata.
+
+        `metadata` is a JSON column that can legitimately hold a list, a string
+        or a number (recall._as_mapping exists for exactly this reason). A key
+        filter is only meaningful for object metadata; everything else does not
+        match, and must not raise.
+        """
+        if not isinstance(metadata, dict):
+            return False
+        return metadata.get(key) == value
+
+    def _graph_only_query(self, graph_from: int, *, k: int, kind: str | None,
+                          agent_id: str | None, tenant: str,
+                          max_hops: int) -> list[dict]:
+        """Traverse from a known memory id with no text leg at all."""
+        ranked = self.graph_ranking([int(graph_from)], kind=kind,
+                                    agent_id=agent_id, tenant=tenant,
+                                    depth=max_hops,
+                                    budget=max(4 * k, 256))
+        rows: list[dict] = []
+        for mid in ranked[:k]:
+            row = self.get(mid, tenant=tenant)
+            if row is not None:
+                row["score"] = 0.0   # no text evidence; score is not comparable
+                rows.append(row)
+        return rows
+
+    @_serialized
     def recall(self, query: str, k: int = 5, kind: str | None = None,
                k_fetch: int | None = None, agent_id: str | None = None,
                reranker: str | None = None, tenant: str = "default") -> list[dict]:
@@ -1656,6 +1820,11 @@ class MemoryStore:
                                    rrf_k=self.cfg.rrf_k)
         return graph_expand(masses, adjacency, decay=self.cfg.graph_decay,
                             budget=budget)
+
+    @property
+    def graph_enabled(self) -> bool:
+        """Is the graph leg active? Yes iff graph_weight > 0."""
+        return self.cfg.graph_weight > 0.0
 
     def _graph_adjacency(self, seeds: list[int], *, kind: str | None,
                          agent_id: str | None, tenant: str,

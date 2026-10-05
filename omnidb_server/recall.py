@@ -76,7 +76,7 @@ def _as_mapping(value) -> dict:
 
 def run_recall(store, query: str, k: int, kind, k_fetch,
                agent_id, reranker, log_query: bool = False,
-               tenant: str = "default") -> list[dict]:
+               tenant: str = "default", max_hops: int = 2) -> list[dict]:
     """AUDIT-I08: all legs select live rows of the requested kind/scope.
 
     None means no kind/scope restriction; an empty agent_id is a supplied
@@ -143,8 +143,47 @@ def run_recall(store, query: str, k: int, kind, k_fetch,
         ).fetchall()
         sparse_ids = [int(r["rowid"]) for r in rows]
 
-    fused = rrf([dense_ids, sparse_ids], k=store.cfg.rrf_k,
-                weights=[store.cfg.dense_weight, store.cfg.sparse_weight])
+    seed_scores = rrf([dense_ids, sparse_ids], k=store.cfg.rrf_k,
+                  weights=[store.cfg.dense_weight, store.cfg.sparse_weight])
+
+    # ADR-08 / W3-3: the graph leg. Off when graph_weight == 0.0, so the guard
+    # is the weight itself — no separate flag that can disagree with it and
+    # produce silently dead config.
+    #
+    # Seeded from the *fused* ranking rather than a single leg, because the
+    # fused ranking is the only place in the pipeline where leg agreement is
+    # expressed and the thing a graph leg should amplify is exactly that
+    # agreement, not whichever leg happened to be stronger.
+    graph_ids: list[int] = []
+    if store.graph_enabled and seed_scores:
+        # One extra subtlety: fused ordering is score-descending with no id
+        # tie-break, so the seeds get their own explicit (-score, id) order
+        # rather than inheriting a tie-break-free one. A derived leg must
+        # never be *less* deterministic than what it is seeded from.
+        seeds = [mid for mid, _ in sorted(
+            seed_scores.items(), key=lambda pair: (-pair[1], pair[0]))]
+        budget = store.cfg.graph_expand_budget or max(4 * k, 256)
+        graph_ids = store.graph_ranking(
+            seeds[:20], kind=kind, agent_id=agent_id, tenant=tenant,
+            depth=max_hops, budget=budget)
+        # Provenance for the unified surface: which rows the graph leg added.
+        # Store-side attribute so query() can annotate without a second run.
+        try:
+            store.graph_leg_last = list(graph_ids)
+        except AttributeError:
+            pass
+
+    # Two rrf() calls rather than seeding dense_ids.extend(graph_ids), because
+    # the two-call form makes the bit-identity guarantee trivially provable:
+    # with an empty leg, fused is literally today's expression. And for an id not
+    # in graph_ids the accumulated float is bit-identical, because rrf()
+    # accumulates in list order and the first two lists are unchanged.
+    if graph_ids:
+        fused = rrf([dense_ids, sparse_ids, graph_ids], k=store.cfg.rrf_k,
+                    weights=[store.cfg.dense_weight, store.cfg.sparse_weight,
+                             store.cfg.graph_weight])
+    else:
+        fused = seed_scores
     scored = sorted(fused.items(), key=lambda pair: -pair[1])
     fused_rows: list[sqlite3.Row] = []
     if scored:

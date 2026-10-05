@@ -57,17 +57,30 @@ def graph_store(tmp_path):
 def test_a_graph_reachable_row_can_appear_in_a_content_query(graph_store):
     """The headline capability: find by content, then traverse.
 
-    `far` shares no searchable term with the query. It is two hops from a
-    strong lexical match, so a unified query that fuses a graph leg must be able
-    to surface it. Today `recall("kubernetes ingress")` cannot, because the
-    graph is only reachable by id.
+    The graph leg must surface rows that only the graph path can find. With the
+    brute-force + hashing embedder every row carries nonzero dense similarity,
+    so the honest discriminator is not "text-found vs graph-found" on recall —
+    it is whether the *graph leg* itself returns the two-hop neighbour, and
+    whether a query seeded from a text result reaches it. Both are asserted
+    directly against the leg, which is the new capability.
     """
     st, ids = graph_store
     hits = {r["id"] for r in st.recall("kubernetes ingress", k=10)}
     assert ids["seed"] in hits, "control: the lexical match itself is missing"
-    assert ids["far"] not in hits, (
-        "the graph-reachable row is already reachable by text; this test "
-        "cannot tell a working graph leg from no graph leg at all"
+
+    # The leg's own output: mid and far are reachable from the seed through the
+    # graph, even though they share no term with the query.
+    st.cfg.graph_weight = 0.5
+    ranked = st.graph_ranking([ids["seed"]], kind=None, agent_id=None,
+                              tenant="default", depth=2, budget=256)
+    assert ids["mid"] in ranked and ids["far"] in ranked, (
+        "the graph leg did not reach its own neighbours; see test_graph_leg_sql"
+    )
+
+    # And the unified surface reaches them through a content query.
+    result = st.query({"text": "kubernetes ingress", "graph": {"hops": 2}})
+    assert {r["id"] for r in result} == {ids["seed"], ids["mid"], ids["far"]}, (
+        "the unified query returned the wrong set: " + str(result)
     )
 
 
@@ -113,23 +126,40 @@ def test_graph_contribution_is_attributable(graph_store):
 
 # --- U2: backward compatibility is a property, not a hope ---------------------
 
-def test_disabling_the_graph_leg_reproduces_the_two_leg_result_exactly(graph_store):
-    """The existing result must be bit-identical when unification is off.
+def test_disabling_the_graph_leg_reproduces_the_two_leg_result_exactly(tmp_path):
+    """With weight 0.0, edges present must equal edges absent, identically.
 
-    Not approximately. RRF sums floats, and a reordering would silently change
-    what every existing caller and test observes.
+    Not approximately. The leg at weight 0.0 is "never computed", and this is
+    the observable form of that claim: a store whose graph exists returns the
+    same ids at the same scores as one whose graph does not exist at all.
+    If the off-switch were "computed then discarded", any reordering, rounding,
+    or access-count side effect of the computation would show up here.
+
+    Two fresh stores are built instead of two sequential recalls on one, because
+    recall bumps access_count and that bump feeds final_score — a sequential
+    comparison would conflate the graph leg with the access-count effect.
     """
-    st, _ids = graph_store
-    before = st.recall("kubernetes ingress", k=10)
-    st.cfg.graph_weight = 0.0
-    after = st.recall("kubernetes ingress", k=10)
-    st.cfg.graph_weight = st.cfg.__class__.graph_weight
-    assert [r["id"] for r in before] == [r["id"] for r in after]
-    for a, b in zip(before, after):
-        assert a["score"] == b["score"], (
-            "disabling the graph leg changed a score; the two-leg path is not "
-            "bit-identical, so existing callers would observe a change"
-        )
+
+    def build(home, with_edges):
+        st = make_store(home)
+        try:
+            seed = st.remember("kubernetes ingress controller setup")["id"]
+            mid = st.remember("zzqx wugglethorpe frobnicator")["id"]
+            far = st.remember("qqqq vvvvvv blorp")["id"]
+            if with_edges:
+                st.link(seed, mid, label="depends_on")
+                st.link(mid, far, label="depends_on")
+            st.cfg.graph_weight = 0.0
+            return st.recall("kubernetes ingress", k=10)
+        finally:
+            st.close()
+
+    with_edges = build(tmp_path / "edged", with_edges=True)
+    without_edges = build(tmp_path / "bare", with_edges=False)
+    assert [(r["id"], r["score"]) for r in with_edges] ==            [(r["id"], r["score"]) for r in without_edges], (
+        "a present-but-disabled graph changed the result; the off-switch does "
+        "not mean 'off'"
+    )
 
 
 def test_the_plain_recall_signature_still_works(graph_store):
