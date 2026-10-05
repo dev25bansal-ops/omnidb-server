@@ -1,0 +1,183 @@
+{
+  "host_cpus": 28,
+  "single_tenant": {
+    "tenants": 1,
+    "writes": 400,
+    "mean_ms": 0.7564182499481831,
+    "p50_ms": 0.44640000123763457,
+    "p95_ms": 1.074300002073869,
+    "p99_ms": 13.12319999851752
+  },
+  "batch_scaling": [
+    {
+      "tenants": 1,
+      "batch": 200,
+      "reps": 5,
+      "trials": 5,
+      "mean_ms": 43.640535999729764,
+      "trial_means_ms": [
+        38.02,
+        37.39,
+        42.6,
+        50.93,
+        49.26
+      ],
+      "noise_pct": 31.02070056882936,
+      "p50_ms": 44.13329999806592,
+      "p95_ms": 53.38789999950677,
+      "us_per_write": 218.20267999864882
+    },
+    {
+      "tenants": 2,
+      "batch": 200,
+      "reps": 5,
+      "trials": 5,
+      "mean_ms": 53.13367599999765,
+      "trial_means_ms": [
+        42.4,
+        45.09,
+        50.38,
+        54.91,
+        72.89
+      ],
+      "noise_pct": 57.372729111805,
+      "p50_ms": 50.51530000491766,
+      "p95_ms": 63.95440000051167,
+      "us_per_write": 265.66837999998825
+    },
+    {
+      "tenants": 4,
+      "batch": 200,
+      "reps": 5,
+      "trials": 5,
+      "mean_ms": 55.85578399972292,
+      "trial_means_ms": [
+        45.22,
+        51.2,
+        55.12,
+        64.4,
+        63.35
+      ],
+      "noise_pct": 34.33653352596565,
+      "p50_ms": 58.051300002261996,
+      "p95_ms": 67.75740000011865,
+      "us_per_write": 279.2789199986146
+    },
+    {
+      "tenants": 8,
+      "batch": 200,
+      "reps": 5,
+      "trials": 5,
+      "mean_ms": 81.13572400034172,
+      "trial_means_ms": [
+        69.75,
+        82.31,
+        85.01,
+        79.87,
+        88.75
+      ],
+      "noise_pct": 23.415604202050694,
+      "p50_ms": 78.1321000031312,
+      "p95_ms": 107.62740000063786,
+      "us_per_write": 405.6786200017086
+    },
+    {
+      "tenants": 16,
+      "batch": 200,
+      "reps": 5,
+      "trials": 5,
+      "mean_ms": 120.23465200065402,
+      "trial_means_ms": [
+        100.64,
+        110.56,
+        120.8,
+        141.43,
+        127.75
+      ],
+      "noise_pct": 33.930484532468846,
+      "p50_ms": 117.78149999736343,
+      "p95_ms": 147.73470000363886,
+      "us_per_write": 601.1732600032701
+    },
+    {
+      "tenants": 32,
+      "batch": 200,
+      "reps": 5,
+      "trials": 5,
+      "mean_ms": 148.60456400027033,
+      "trial_means_ms": [
+        148.56,
+        165.38,
+        140.95,
+        140.07,
+        148.06
+      ],
+      "noise_pct": 17.033097313917995,
+      "p50_ms": 143.23329999751877,
+      "p95_ms": 161.8014000050607,
+      "us_per_write": 743.0228200013516
+    },
+    {
+      "tenants": 64,
+      "batch": 200,
+      "reps": 5,
+      "trials": 5,
+      "mean_ms": 256.35793600056786,
+      "trial_means_ms": [
+        270.95,
+        243.31,
+        253.72,
+        250.87,
+        262.93
+      ],
+      "noise_pct": 10.780419139420959,
+      "p50_ms": 247.5163000053726,
+      "p95_ms": 302.87520000274526,
+      "us_per_write": 1281.7896800028393
+    }
+  ],
+  "corpus_scaling": [
+    {
+      "tenants": 4,
+      "rows_per_tenant": 50,
+      "total_rows": 200,
+      "ms_per_write": 0.7771774999855552
+    },
+    {
+      "tenants": 4,
+      "rows_per_tenant": 200,
+      "total_rows": 800,
+      "ms_per_write": 0.8128947499972128
+    },
+    {
+      "tenants": 4,
+      "rows_per_tenant": 800,
+      "total_rows": 3200,
+      "ms_per_write": 1.2781267187506273
+    },
+    {
+      "tenants": 4,
+      "rows_per_tenant": 3200,
+      "total_rows": 12800,
+      "ms_per_write": 1.0750047578125077
+    }
+  ],
+  "isolation_at_scale": [
+    {
+      "tenants": 1,
+      "cross_tenant_postings": 0
+    },
+    {
+      "tenants": 10,
+      "cross_tenant_postings": 0
+    },
+    {
+      "tenants": 50,
+      "cross_tenant_postings": 0
+    },
+    {
+      "tenants": 100,
+      "cross_tenant_postings": 0
+    }
+  ]
+}
