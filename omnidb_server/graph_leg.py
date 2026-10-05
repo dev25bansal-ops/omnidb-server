@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import heapq
 import math
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 
 __all__ = ["graph_seed_masses", "graph_expand", "normalize_masses"]
 
@@ -76,7 +76,7 @@ def graph_seed_masses(scores: Mapping[int, float],
 
 
 def graph_expand(seeds: Mapping[int, float],
-                 adjacency: Mapping[int, object],
+                 adjacency: Mapping[int, Iterable[int]],
                  *,
                  decay: float = 0.5,
                  budget: int = 256) -> list[int]:
