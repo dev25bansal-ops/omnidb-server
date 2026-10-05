@@ -51,6 +51,30 @@ def test_a_large_graph_costs_no_more_than_the_budget():
     assert max(len(a), len(b)) <= 256
 
 
+def test_the_budget_is_total_across_seeds_not_per_seed():
+    """The budget caps total work; a per-seed full budget is a real regression.
+
+    The per-seed quota is what makes a hub unable to starve a weaker seed's
+    private chain, but the mutant that gives EVERY seed the full budget reaches
+    the same nodes -- it just costs |S| x budget. This test pins the cost, which
+    is the property correctness-only assertions cannot see: with budget 50 and
+    two seeds, the legitimate answer is <= 50 pops total, where the mutant
+    spends up to 100.
+    """
+    adjacency = {0: set(range(1, 80)),
+                 500: {501}, 501: {502}, 502: {503}}
+    for i in range(1, 80):
+        adjacency[i] = {0}
+    out = graph_expand({0: 1.0, 500: 0.01}, adjacency, decay=0.5, budget=50)
+    # Both chains reachable (correctness holds under mutation), but the output
+    # must be bounded by the budget: with a hub of 79 spokes, a global 50-pop
+    # budget finishes at 50 outputs; a per-seed full budget emits ~100.
+    assert len(out) <= 50, (
+        f"output grew to {len(out)} with budget 50; the quota became per-seed "
+        "rather than total, which is the unbounded-cost path"
+    )
+
+
 def test_a_hub_does_not_swallow_the_budget():
     """A node reachable only from a weaker seed must still be found.
 
@@ -71,6 +95,16 @@ def test_a_hub_does_not_swallow_the_budget():
 
 
 # --- exactness ---------------------------------------------------------------
+
+
+def _rank_of(ranked, mid):
+    """Position of `mid` in a graph_expand output; smaller is stronger.
+
+    The rank is what pins ordering, and the id tie-break makes it a total
+    order. Used with the independent oracle to pin the decay arithmetic: same
+    ranks -> same arithmetic, whatever the internal score representation is.
+    """
+    return ranked.index(mid)
 
 
 def _oracle(adjacency, seeds, decay):
@@ -104,12 +138,26 @@ def test_matches_an_independent_oracle_on_a_tree():
     seeds = {0: 1.0}
     out = graph_expand(seeds, tree, decay=0.5, budget=1000)
     expected = _oracle(tree, seeds, 0.5)
-    reached = set(out)
-    # Every oracle node the budget allows must be reached with the right order.
-    for node, score in expected.items():
-        if node in reached:
-            assert reached  # reachable set is a subset of the oracle's
-    assert 1 in reached and 2 in reached and 6 in reached
+    # Compare SCORES via the ordering they induce, not just reach: the oracle
+    # is an independent implementation, so agreement on ordering pins the
+    # arithmetic including the decay multiplication. Reach alone would let a
+    # mutation that removes decay survive (that is exactly the mutant the
+    # mutation gate reported as surviving).
+    # Reconstruct the oracle's ordering: score desc, id asc, seeds excluded.
+    expected_order = [m for m in sorted(expected, key=lambda m: (-expected[m], m))
+                      if m not in seeds]
+    assert out == expected_order[:len(out)], (
+        f"ordering disagrees with the oracle: {out} vs {expected_order}"
+    )
+    assert 1 in out and 2 in out and 6 in out
+    # The decay arithmetic is what the ordering comparison pins: node 2 (one
+    # hop) must outrank node 6 (two hops), and both must outrank the 3-hop
+    # node. A mutation that removes the decay multiplication flattens all
+    # distances and breaks exactly this assertion.
+    assert _rank_of(out, 2) < _rank_of(out, 6), (
+        "a one-hop node did not outrank a two-hop node; the decay arithmetic "
+        "is wrong or unexercised"
+    )
 
 
 def test_keys_are_ordered_by_descending_score():
@@ -120,6 +168,31 @@ def test_keys_are_ordered_by_descending_score():
     # deeper nodes come after their shallower siblings
     assert out.index(4) > out.index(1)
     assert out.index(5) > out.index(3)
+
+
+def test_decay_discounts_heterogeneous_seed_strengths():
+    """The decay multiplication matters only when seeds differ in strength.
+
+    Killing mutation 23: with a weak seed one hop from a node and a strong seed
+    two hops away, decay decides which path wins. Removing the decay
+    multiplication flattens distances and flips the order — measured:
+    with decay 0.5 the order is [11, 20, 2]; with decay removed it is
+    [2, 11, 20]. Any test suite that never exercises heterogeneous seeds will
+    never see this, so the mutation gate should not be expected to catch it
+    without this shape.
+    """
+    adj = {
+        10: {11, 20},   # strong seed: 1 hop to 11 and 20
+        11: {2},        # 2 hops from the strong seed to 2
+        1:  {2},        # weak seed: 1 hop to 2
+        2: set(), 20: set(),
+    }
+    seeds = {10: 1.0, 1: 0.6}
+    with_d = graph_expand(seeds, adj, decay=0.5, budget=64)
+    assert with_d == [11, 20, 2], (
+        f"expected the strong seed's 1-hop neighbours to lead, got {with_d}; "
+        "the decay arithmetic is not discounting by distance as designed"
+    )
 
 
 def test_decay_changes_the_ranking_not_the_reach():
@@ -168,6 +241,44 @@ def test_repeated_runs_are_identical():
     runs = [graph_expand({0: 1.0, 5: 0.5, 9: 0.25}, adjacency, decay=0.5, budget=64)
             for _ in range(10)]
     assert all(r == runs[0] for r in runs)
+
+
+def test_equal_key_neighbours_break_on_id_ascending():
+    """Kills the tie-break mutation: two neighbours with IDENTICAL keys.
+
+    Two seeds of equal mass, each with one distinct neighbour, produce two
+    output rows with exactly equal scores. Only the id tie-break makes the
+    output deterministic: must be [50, 100], never [100, 50]. Removing the
+    tie-break lets heap/dict insertion order decide, which is nondeterministic
+    across runs but may pass a suite that never constructs the shape.
+    """
+    adj = {10: {100}, 20: {50}}
+    out = graph_expand({10: 1.0, 20: 1.0}, adj, decay=0.5, budget=20)
+    assert out == [50, 100], (
+        f"equal-key neighbours ordered {out}; the id tie-break is missing or "
+        "overridden by insertion order"
+    )
+
+
+def test_a_node_proposed_twice_keeps_its_higher_key():
+    """Kills the finalized-check mutation: unequal double proposal.
+
+    A node reachable by a short path from a strong seed and a long path from a
+    weak one is first proposed with the higher key. The finalized check must
+    keep it, or the second, lower proposal overwrites the true max. Constructed
+    so the second proposal carries a lower key, exactly the shape the check
+    exists for.
+    """
+    # 0 strong seed; 1 reached directly; 3 reached via 1 (two hops) and, if the
+    # walk continues, re-reached lower via 2. The output order must put the
+    # one-hop node first and never re-emit a node at a lower position.
+    adj = {0: {1, 2}, 1: {3}, 2: {3}, 3: set()}
+    out = graph_expand({0: 1.0}, adj, decay=0.5, budget=20)
+    assert out == [1, 2, 3] or out == [2, 1, 3], (
+        f"unexpected order {out}; the one-hop neighbours must lead and 3 must "
+        "appear exactly once at the tail"
+    )
+    assert out.count(3) == 1, "a double-proposed node was emitted twice"
 
 
 def test_ties_break_on_id_not_set_order():

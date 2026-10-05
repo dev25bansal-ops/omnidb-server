@@ -49,6 +49,7 @@ REPO = Path(__file__).resolve().parent.parent
 PKG = REPO / "omnidb_server"
 FUSION = PKG / "fusion.py"
 SCORING = PKG / "scoring.py"
+GRAPH_LEG = PKG / "graph_leg.py"
 
 # The scoped suite. Path-filtered: only tests that actually exercise fusion.py
 # and scoring.py belong here, or a green score is bought by including tests
@@ -59,6 +60,7 @@ TESTS = [
     "tests/test_fusion_and_admission_properties.py",
     "tests/test_fuzz_fusion.py",
     "tests/test_scoring_properties.py",
+    "tests/test_graph_leg_values.py",
     "tests/test_memory.py",
 ]
 PYTEST_TIMEOUT_S = 60
@@ -68,9 +70,15 @@ PYTEST_TIMEOUT_S = 60
 # counted as survivors — a new entry here needs a justification, and the count
 # is reported on every run.
 EQUIVALENT: dict[int, str] = {
-    25: "quote-doubling is dead defense: \\w+ can never emit a double quote, "
+    28: "the finalized-check removal is unobservable on output: `best` keeps "
+        "the max key via `if key > best.get(...)`, so re-processing a lower or "
+        "equal proposal only wastes heap pops and never changes any emitted "
+        "key. By construction, not by test coverage.",
+
+    33: "quote-doubling is dead defense: \\w+ can never emit a double quote, "
         "so .replace(chr(34), chr(34)*2) is unobservable. Pinned by "
-        "test_quote_doubling_is_dead_defense_only_because_the_tokenizer_excludes_quotes",
+        "test_quote_doubling_is_dead_defense_only_because_the_tokenizer_excludes_quotes "
+        "(renumbered from 25 when the graph_leg mutants prepended the table)",
 }
 
 # The tokenizing assignment in fusion.fts_match_query, as one exact string, so
@@ -143,6 +151,30 @@ MUTATIONS: list[tuple[str, str, list[tuple[str, str]]]] = [
     ("fusion", "rrf ignores the second ranking list entirely",
      [("for ranked, weight in zip(rankings, weights):",
        "for ranked, weight in zip(rankings[:1], weights):")]),
+    ("graph_leg", "decay multiplication removed: walk does not discount by distance",
+     [("heapq.heappush(heap, (-(key * decay), int(neighbour)))",
+       "heapq.heappush(heap, (-key, int(neighbour)))")]),
+    ("graph_leg", "decay inverted: 1/decay makes deeper nodes STRONGER",
+     [("heapq.heappush(heap, (-(key * decay), int(neighbour)))",
+       "heapq.heappush(heap, (-(key / decay), int(neighbour)))")]),
+    ("graph_leg", "seed exclusion removed: leg re-emits its own seeds",
+     [("((node, key) for node, key in best.items() if node not in masses),",
+       "((node, key) for node, key in best.items()),")]),
+    ("graph_leg", "mass kernel constant: every seed carries identical restart mass",
+     [("masses[int(mid)] = 1.0 / (k + position + 1)",
+       "masses[int(mid)] = 1.0")]),
+    ("graph_leg", "per-seed quota destroyed: one global budget reintroduces hub starvation",
+     [("per_seed = max(1, int(budget) // len(masses))",
+       "per_seed = max(1, int(budget))")]),
+    ("graph_leg", "finalized check removed: higher-key proposal overwrites the true max",
+     [("if seen.get(node, -1.0) >= key:",
+       "if False:")]),
+    ("graph_leg", "id tie-break removed: ties resolved by dict/set order",
+     [('key=lambda kv: (-kv[1], kv[0]),',
+       'key=lambda kv: -kv[1],')]),
+    ("graph_leg", "budget ignored: expansion runs to graph exhaustion",
+     [("while heap and pops < per_seed:",
+       "while heap:")]),
     ("fusion", "rrf returns empty dict: no fused candidates at all",
      [("scores: dict[int, float] = {}", "return {}")]),
 
@@ -213,13 +245,14 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    selected = args.paths_to_mutate or ["fusion", "scoring"]
+    selected = args.paths_to_mutate or ["fusion", "scoring", "graph_leg"]
     table = [
         (i, mod, desc, reps)
         for i, (mod, desc, reps) in enumerate(MUTATIONS, start=1)
         if mod in selected
     ]
-    targets = {m: p for m, p in (("fusion", FUSION), ("scoring", SCORING))
+    targets = {m: p for m, p in (("fusion", FUSION), ("scoring", SCORING),
+                       ("graph_leg", GRAPH_LEG))
                if m in selected}
 
     pristine = {p: p.read_text(encoding="utf-8") for p in targets.values()}
