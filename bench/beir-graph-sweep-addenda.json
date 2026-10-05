@@ -1,0 +1,27 @@
+{
+  "displacement": {
+    "method": "at w=0.3 the leg-added rows displace the same number off-window rows; count those that were qrels-relevant",
+    "displaced_relevant": {
+      "fiqa": 0,
+      "scifact": 0,
+      "nfcorpus": 3,
+      "scidocs": 0
+    },
+    "note": "nfcorpus off-window held 160 relevant rows; 3 of them were displaced by leg-additions"
+  },
+  "mechanism_audit": {
+    "nfcorpus_off_window_relevant": 12174,
+    "of_those_1hop_neighbours_of_top10_seeds": 713,
+    "leg_reachable_at_depth2": 1459,
+    "entered_window_at_w030": 0,
+    "note": "their 1/(60+p) mass cannot outvote the text legs; the leg's additions enter by graph-adjacency mass, not by relevance"
+  },
+  "added_rows_all_in_union_of_some_querys_relevant_set": {
+    "fiqa": true,
+    "scifact": true,
+    "nfcorpus": true,
+    "scidocs": true,
+    "note": "62 leg-added rows across 1000-query full runs all appear in the union of some query's relevant set ('wrong query's answer', not junk); on scidocs 16/16. nfcorpus union covers 86.1% of docs, so this is not a redeeming precision signal.",
+    "scidocs_full_run_additions_vs_capped_cell": "16 vs 5 (the cap itself)"
+  }
+}
