@@ -35,6 +35,19 @@ applying a fixed table of 30 hand-written mutations (14 scoring.py,
 subprocess timeout, recording KILLED/SURVIVED, and restoring originals in a
 `finally` block so no mutated file can survive an interrupted run.
 
+> **Status note (2026-10-07).** This report records the audit's *starting*
+> state — 33% with 20 survivors — and the recommendations that followed it.
+> Those recommendations were adopted: the gate now runs 38 mutants with 37
+> killed and 1 genuinely equivalent, and it exits non-zero when the score falls
+> below `--min-score` or when any anchor stops matching the source (a stale
+> anchor used to look identical to an unkilled mutant). One declaration since
+> withdrawn is worth noting: mutant 25 here (`quote-doubling`) was accepted as
+> equivalent; it remains equivalent and is now numbered 33. A *different*
+> mutant — the finalised-check removal in `graph_leg.py` — was declared
+> equivalent on the same style of argument and proved observable under the
+> hard pop budget, and is now killed by a pinned counterexample. See
+> `scripts/mutation_check.py` for the current table and `EQUIVALENT` rationale.
+
 ## Results
 
 Baseline: `12 passed` (tests/test_scoring_properties.py +
