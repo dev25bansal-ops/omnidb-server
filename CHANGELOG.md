@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — paper revisions (round 6, 2026-10-08)
+- **Table II now carries the headline evidence.** Added `Delta_CE` and the
+  16-way family-corrected p for every cell, with the four survivors daggered
+  (all losses). The central negative result is auditable from the table alone
+  rather than requiring the prose.
+- Conclusion: the recall-gap sentence rewritten to "first-stage recall limits
+  which relevant documents are available for recovery; we use the
+  hybrid-minus-BM25 recall gap as an empirical measure of that headroom, and we
+  do not treat it as a bound on achievable nDCG".
+- "Two-factor characterization" replaced throughout by "a measured
+  recall-headroom factor plus an unmeasured model-corpus boundary hypothesis"
+  (the second factor is not measured and is no longer presented as established).
+- Matched-control table: "differ only in fusion weights" corrected - the
+  executed legs necessarily differ; the configuration difference is which legs
+  run and with what weights.
+- Table values stated as means over each corpus's queries from per-query
+  nDCG@10, paired within query.
+- Section order: the matched-controls subsection now precedes Hybrid-vs-Vector-
+  Only, so its table is introduced before it appears.
+- Figure 2 caption: the arm choice is stated as a fixed convention (one x-axis
+  definition) rather than a post-hoc pick, and the panel is labelled
+  descriptive at n=4.
+- "The deepening is systematic" given a countable basis (all eight hybrid arms
+  move down or flat).
+- touche-2020 exclusion: kept qualitative (no per-query statistic asserted) -
+  the collection's qrels are not reachable from the mirror used for the other
+  four corpora, so no number is claimed for it.
+- ECDF percentages marked approximate; the 2026-09-30 editorial note marked
+  resolved.
+
 ### Changed — paper revisions (round 5, 2026-10-08)
 - **Engine count reconciled.** The methodology said "six engines" while the
   results added a seventh (matched sparse-only). Resolved as an explicitly
