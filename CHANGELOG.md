@@ -11,12 +11,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Graph retrieval leg (`omnidb_server.graph_leg` + `store.graph_ranking` + the
   recall fusion branch): a bounded, both-endpoints-fenced adjacency expansion
   feeds a max-discounted-path ranking, fused as a third RRF leg. Ships off
-  (`graph_weight=0.0`); measured a threshold switch — nothing below ~0.2, 8
-  rows/query at 0.875 precision at 0.3 on a synthetic topic-clustered corpus.
+  (`graph_weight=0.0`). The weight behaves as a switch within the tested range:
+  a controlled synthetic mechanism test (60 memories, 5 queries) showed nothing
+  below ~0.2 and 8 rows/query at 0.875 precision at 0.3; real BEIR corpora put
+  additions above the 0.10–0.30 interval and grade them near zero precision
+  under a qrels-derived graph, while an 80/20 held-out construction finds a
+  small gain on nfcorpus only (+0.0019 nDCG@3). The 0.0 default is an
+  engineering precaution, not a measured optimum.
 - Unified query surface: `MemoryStore.query(spec)` and the MCP `query` tool
   return one ranked list from all four capabilities in one call; rows carry
   `sources` provenance; a spec smuggling `tenant` is rejected.
-- Mutation-gate coverage for `graph_leg.py` (8 mutants; 100% killed-or-equivalent).
+- Mutation-gate coverage for `graph_leg.py` (8 mutants). All 8 are now killed:
+  the finalised-check mutant was first declared equivalent ("only wastes heap
+  pops"), which is false under a hard pop budget — a wasted pop is one fewer
+  node finalised. Fuzzing found output differences on 124/300 random multi-path
+  graphs, the declaration was withdrawn, and
+  `test_the_finalized_check_is_load_bearing_under_a_hard_budget` pins the
+  minimal counterexample. Gate total: 38 mutants, 37 killed, 1 equivalent.
 
 - Tenant observability for operators: `MemoryStore.tenants()` returns the home's full tenant roster with live/soft-deleted/superseded/total counts and per-kind breakdown. `omnidb-server tenants` exposes it as a read-only CLI command; this is the single-tenant-operator view, deliberately not an MCP tool (scoped tenants cannot enumerate other tenants via the server).
 - Multi-tenant streamable-HTTP transport: `omnidb-server serve-http` plus a
