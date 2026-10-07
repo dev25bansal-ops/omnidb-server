@@ -17,11 +17,17 @@ The experiment is exploratory: it reports additions, precision, displacement,
 and nDCG@3 deltas for weights {0,.05,.1,.3}; it does not silently select a
 production default from test labels.
 
-Usage:
-  python -m bench.graph_ablation --mode train-test --corpus scifact \\
-      --embedding hashing --json bench/train-test-scifact.json
-  python -m bench.graph_ablation --mode token --json bench/token-kg-results.json
-  python -m bench.graph_ablation --mode semantic --json bench/semantic-kg-results.json
+Usage (the three commands that produce the committed artifacts):
+  python -m bench.graph_ablation --mode train-test --embedding hashing \\
+      --json bench/graph-ablation-train-test.json
+  python -m bench.graph_ablation --mode token --embedding hashing \\
+      --corpus nfcorpus,scifact --json bench/graph-ablation-token.json
+  python -m bench.graph_ablation --mode semantic --embedding minilm \\
+      --json bench/graph-ablation-semantic.json
+
+Those three files are the source of tab:ablation in the addendum; every value
+in the table reproduces from them. The token run covers nfcorpus and scifact
+only (the prose states this scope rather than implying all four).
 """
 from __future__ import annotations
 
