@@ -1,0 +1,16 @@
+{
+  "nodes": 200000,
+  "directed_adjacency_rows": 999982,
+  "out_degree": 5,
+  "budget": 256,
+  "seeds": 5,
+  "decay": 0.5,
+  "trials": 200,
+  "median_ms": 0.2825,
+  "p95_ms": 0.3247,
+  "p99_ms": 0.5286,
+  "min_ms": 0.2577,
+  "max_ms": 0.6513,
+  "finalized_nodes": 250,
+  "note": "'finalized_nodes' is the leg's output size at this budget (nodes whose final score was set and that are not seeds). It is not a pop count: the loop executes at most `budget` pops across all seeds, and seeds are excluded from the output."
+}

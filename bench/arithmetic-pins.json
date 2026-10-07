@@ -1,0 +1,45 @@
+{
+  "rrf_constant": 60,
+  "weights": {
+    "dense": 0.7,
+    "sparse": 0.3,
+    "graph": 0.1
+  },
+  "crossover": {
+    "graph_only_rank0_term": 0.00163934,
+    "tie_rank_formula": 366.0,
+    "tie_rank_rounded": 366,
+    "first_dense_rank_strictly_beaten": 367,
+    "consistent": true
+  },
+  "ppr_3node_path": {
+    "damping": 0.85,
+    "stationary_distribution": [
+      0.25,
+      0.5,
+      0.25
+    ],
+    "with_restart_2000_iters": [
+      0.34527,
+      0.459459,
+      0.19527
+    ],
+    "without_restart_2000_iters": [
+      0.5,
+      0.0,
+      0.5
+    ],
+    "addendum_claims": {
+      "stationary": [
+        0.25,
+        0.5,
+        0.25
+      ],
+      "with_restart": [
+        0.345,
+        0.459,
+        0.195
+      ]
+    }
+  }
+}
