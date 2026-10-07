@@ -69,12 +69,17 @@ PYTEST_TIMEOUT_S = 60
 # reachable today, so no test can kill them. Declared rather than silently
 # counted as survivors — a new entry here needs a justification, and the count
 # is reported on every run.
+#
+# Mutant 28 (finalized-check removal) USED TO BE HERE and is not equivalent.
+# Its old justification claimed the removal "only wastes heap pops and never
+# changes any emitted key". The conclusion about `best` was right (the max-key
+# guard keeps the maximum), but the premise is wrong under this algorithm's
+# hard pop cap: a wasted pop is one fewer node finalised, so the output SET
+# shrinks. Fuzzing found mismatches on 124 of 300 random multi-path graphs;
+# test_the_finalized_check_is_load_bearing_under_a_hard_budget is the minimal
+# deterministic reproducer (budget 5: guard emits [1,2,3,4], removal emits
+# [1,2,3]). It is now an ordinary mutant and must be killed.
 EQUIVALENT: dict[int, str] = {
-    28: "the finalized-check removal is unobservable on output: `best` keeps "
-        "the max key via `if key > best.get(...)`, so re-processing a lower or "
-        "equal proposal only wastes heap pops and never changes any emitted "
-        "key. By construction, not by test coverage.",
-
     33: "quote-doubling is dead defense: \\w+ can never emit a double quote, "
         "so .replace(chr(34), chr(34)*2) is unobservable. Pinned by "
         "test_quote_doubling_is_dead_defense_only_because_the_tokenizer_excludes_quotes "

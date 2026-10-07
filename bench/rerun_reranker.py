@@ -93,9 +93,22 @@ def rebuild_top50(ds, emb, cell, cache):
     ids = [int(r["id"]) for r in store.conn.execute(
         "SELECT id FROM memories ORDER BY id")]
     store._mark_dirty()
-    store.index = BruteForceIndex(pathlib.Path(tempfile.mkdtemp()) / "v.npz",
-                                  shared.dim)
-    store.index.add(ids, vecs)
+    # W3-3: store.index is a MultiTenantIndexRouter, and recall() calls
+    # index.query(vec, k, tenant). A bare BruteForceIndex has a 2-arg query()
+    # and raises TypeError. remember_many() has already written the store's
+    # own 512-dim hashing sidecar for the default tenant, so that sidecar is
+    # discarded before the corpus vectors (384-dim, from the benchmark cache)
+    # are installed alongside it.
+    from omnidb_server.tenancy import DEFAULT_TENANT, index_name
+    from omnidb_server.vector_index import open_vector_index
+    home = cfg.home
+    for suffix in ("npz", "hnsw"):
+        stale = home / index_name(DEFAULT_TENANT, suffix)
+        if stale.exists():
+            stale.unlink()
+    router = open_vector_index(home, "brute", shared.dim, len(ids))
+    router.add(ids, vecs, DEFAULT_TENANT)
+    store.index = router
     store.embedder = shared
     ranked = []
     for (_qid, qtext, _rel) in queries:

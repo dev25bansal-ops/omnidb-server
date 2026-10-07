@@ -94,6 +94,43 @@ def test_a_hub_does_not_swallow_the_budget():
     )
 
 
+def test_the_finalized_check_is_load_bearing_under_a_hard_budget():
+    """The finalized-check guard is NOT equivalent to its removal (mutant 28).
+
+    The guard (`if seen.get(node, -1.0) >= key: continue`) skips a node whose
+    proposal key is no better than one already processed. Removing it lets the
+    same node be popped again with a lower-or-equal key. That cannot change
+    `best` — the max-key guard already keeps the maximum — but it *does* spend
+    budget, and under a hard pop cap every wasted pop is a node that will never
+    be finalized. This shape makes the difference observable: node 3 is
+    reachable from the seed both directly (key 0.5 via 1) and through the
+    longer chain (key 0.25 via 2), so without the guard the low proposal for 3
+    costs a pop and node 4 falls outside the budget.
+
+    Pinned as a mutkiller for mutation-check mutant 28; if this test is ever
+    deleted, 28 must go back into the EQUIVALENT table *with a corrected
+    justification* — which this test exists to refute.
+    """
+    adjacency = {
+        0: {1, 2},   # seed reaches 1 and 2 directly
+        1: {3},      # short path to 3: key 0.5
+        2: {3},      # long path to 3: key 0.25 -> a redundant proposal
+        3: {4},
+        4: {5},
+    }
+    out = graph_expand({0: 1.0}, adjacency, decay=0.5, budget=5)
+    # With the guard: pops are 1, 2, 3, 4, 5 (5 finalizations).
+    # Without it: the low proposal for 3 is popped, spending the 5th pop on a
+    # node already finalized, so 4 never enters.
+    assert 4 in out, (
+        "node 4 was dropped: a redundant lower-key proposal for node 3 "
+        "consumed a budget pop, which is exactly what the finalized-check "
+        "guard prevents. This is mutant 28 surviving, meaning output really "
+        f"does depend on the guard. Got: {out}"
+    )
+    assert out == [1, 2, 3, 4], out
+
+
 # --- exactness ---------------------------------------------------------------
 
 

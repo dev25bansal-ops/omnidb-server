@@ -367,12 +367,17 @@ def _validate_config(cfg: "Config") -> None:
         raise ConfigError(f"config value {name} {rule} (got {getattr(cfg, name)!r})")
     # The graph leg must stay a structural minority vote. Its ranking is a
     # function of the fused seeds, so its own contribution to any row is
-    # bounded by graph_weight/(rrf_k+1) while the two legs it is seeded from
-    # contribute up to (dense_weight + sparse_weight)/(rrf_k+1). Capping it at
-    # that sum means a graph-only row can never become the dominant term for
-    # any row -- the leg can expand the candidate set, not outvote its own
-    # seeds. Enforced here rather than left to the default, because the default
-    # is exactly the kind of thing an operator overrides.
+    # bounded by graph_weight/(rrf_k+1) while the TWO LEGS COMBINED contribute
+    # up to (dense_weight + sparse_weight)/(rrf_k+1). Capping graph_weight at
+    # that sum means the graph leg cannot become DOMINANT relative to what its
+    # source legs contribute together. Under DEFAULT weights (0.7/0.3/≤0.0),
+    # no graph-only row can outvote either leg alone. For non-default weights,
+    # the cap provides PARTIAL protection but does NOT guarantee that a
+    # graph-only candidate cannot outrank an INDIVIDUALLY-seeded row --- e.g.,
+    # with w_g=1.0 > w_d=0.7, a graph-only rank-0 beats a dense-only rank-0.
+    # A stronger guarantee would require min RRF(scores over seeds), not max.
+    # Enforced here rather than left to documentation, because the default is
+    # exactly the kind of thing an operator overrides.
     if cfg.graph_weight > cfg.dense_weight + cfg.sparse_weight:
         raise ConfigError(
             "config value graph_weight must be <= dense_weight + sparse_weight "
