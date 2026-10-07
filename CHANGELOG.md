@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — paper revisions (round 5, 2026-10-08)
+- **Engine count reconciled.** The methodology said "six engines" while the
+  results added a seventh (matched sparse-only). Resolved as an explicitly
+  separate experiment: the grid keeps six engines and four secondary
+  comparisons; `omnidb sparse-only` is a controlled case study in its own
+  subsection with its own table, its own family (two contrasts per corpus,
+  Holm), and a stated comparison unit (per-corpus, paired within query).
+- **New subsection + table** for the matched controls: sparse-only, dense-only,
+  and hybrid nDCG@10 across four corpora, with hybrid-minus-single-leg deltas
+  and Holm p-values. Controlled comparisons (varying only fusion weights inside
+  one stack) are now distinguished from external implementation baselines.
+- Figure 2 caption: removed a false "stronger on every corpus" claim (MiniLM
+  exceeds BGE-base on SciDocs).
+- CE section: replaced a two-marginal-CI example — not a CI on the paired
+  difference — with the paired-test statement.
+- Conclusion and mechanism: "bounded by recall" replaced by "first-stage recall
+  limits which relevant documents are available to recover"; the headroom
+  quantity is now defined explicitly as H_w = recall_hybrid@w - recall_BM25@w.
+- Retitled the window section "No Tested Window Improves the Second Stage";
+  "replicates" -> "corroborates ... under a second re-ranker and varying
+  candidate windows".
+- touche-2020 exclusion re-justified on an intrinsic property of the collection
+  (near-degenerate graded judgments) rather than on an earlier protocol's cap.
+- Notation: Equation (1) uses k_RRF; Figure 1 caption uses K; "single-seed"
+  removed from the abstract and the limits sections.
+
 ### Added
 - Graph retrieval leg (`omnidb_server.graph_leg` + `store.graph_ranking` + the
   recall fusion branch): a bounded, both-endpoints-fenced adjacency expansion
