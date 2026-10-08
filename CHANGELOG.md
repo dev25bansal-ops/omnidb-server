@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — MCP handshake advertised the wrong version
+- `initialize` returned `serverInfo.version = "1.29.1"` — the version of the
+  **mcp SDK package**, not of this server. `FastMCP` forwards no version to the
+  low-level `Server`, whose `create_initialization_options` falls back to
+  `pkg_version("mcp")`. Set explicitly on both transports (`server.py`,
+  `http_server.py`); the handshake now reports `0.1.3`.
+- Why it survived: the stdio conformance test asserted `serverInfo.name` and
+  never `serverInfo.version`, so from a client's perspective this server's own
+  version was unobservable. The test now asserts the version, and that
+  assertion was confirmed to fail with the fix reverted.
+
+### Changed — paper revisions (round 8, 2026-10-08)
+- **Citation integrity.** The tenancy paper's bibliography defined eight
+  entries and the prose cited one, leaving named claims about external systems
+  unsourced: Qdrant (9 mentions), LanceDB (5), `sqlite-vec`, HNSW, BM25 and
+  FTS5 were all discussed with no citation. Six citations added at first
+  substantive mention, plus one in the addendum for the MCP query tool. Both
+  documents now cite every entry they define (21/21); both compile with zero
+  undefined citations.
+- **Stale derivative drafts flagged, not silently shipped.** `paper.md`,
+  `omnidb_ieee_access.md` and `omnidb_ieee_access.docx` are dated 2026-09-15
+  and carry claims corrected since — most seriously the false touche-2020
+  "near-degenerate judgments" rationale, the "bounds nDCG at the ceiling"
+  wording, the 2,000-document capped pre-run, a per-cell rather than
+  family-wide multiplicity correction (five significant losses where the
+  current paper reports four), and a +CE column matching no committed
+  artifact. `paper/DERIVATIVES.md` records these against the corrected
+  positions and marks the `.docx` withdrawn until `paper.md` is brought
+  current. `build_docx.js` consumes the stale `paper.md`, so re-running it
+  as-is would republish them.
+- `paper/check_citations.py` added: verifies every `\cite` resolves against a
+  `\bibitem` across both `\input`-spliced documents, and reports entries that
+  are defined but never cited.
+
 ### Changed — paper revisions (round 7, 2026-10-08)
 - **touche-2020 exclusion rationale was factually wrong and is replaced.**
   Rounds 5 and 6 both asserted the collection's graded judgments were
