@@ -1,0 +1,129 @@
+{
+  "metadata": {
+    "method": "paired-difference bootstrap over queries (Delta_i = nDCG_CE - nDCG_hybrid), 10000 resamples, seed 1234",
+    "source": "research-v3-results.ms-marco-minilm-l-6-v2.json",
+    "note": "CIs are on the paired difference, not on the marginal means."
+  },
+  "cells": {
+    "nfcorpus": {
+      "minilm": {
+        "n_queries": 323,
+        "delta": -0.003,
+        "ci95_low": -0.0149,
+        "ci95_high": 0.0085,
+        "ci_excludes_zero": false
+      },
+      "bge-small": {
+        "n_queries": 323,
+        "delta": -0.0127,
+        "ci95_low": -0.0257,
+        "ci95_high": -0.0004,
+        "ci_excludes_zero": true
+      },
+      "e5-small": {
+        "n_queries": 323,
+        "delta": 0.0025,
+        "ci95_low": -0.0078,
+        "ci95_high": 0.0131,
+        "ci_excludes_zero": false
+      },
+      "bge-base": {
+        "n_queries": 323,
+        "delta": -0.019,
+        "ci95_low": -0.0332,
+        "ci95_high": -0.0053,
+        "ci_excludes_zero": true
+      }
+    },
+    "scifact": {
+      "minilm": {
+        "n_queries": 300,
+        "delta": -0.0177,
+        "ci95_low": -0.0456,
+        "ci95_high": 0.0105,
+        "ci_excludes_zero": false
+      },
+      "bge-small": {
+        "n_queries": 300,
+        "delta": -0.0368,
+        "ci95_low": -0.0651,
+        "ci95_high": -0.0098,
+        "ci_excludes_zero": true
+      },
+      "e5-small": {
+        "n_queries": 300,
+        "delta": -0.0357,
+        "ci95_low": -0.0634,
+        "ci95_high": -0.0084,
+        "ci_excludes_zero": true
+      },
+      "bge-base": {
+        "n_queries": 300,
+        "delta": -0.0538,
+        "ci95_low": -0.0836,
+        "ci95_high": -0.0259,
+        "ci_excludes_zero": true
+      }
+    },
+    "scidocs": {
+      "minilm": {
+        "n_queries": 1000,
+        "delta": -0.0197,
+        "ci95_low": -0.0271,
+        "ci95_high": -0.0123,
+        "ci_excludes_zero": true
+      },
+      "bge-small": {
+        "n_queries": 1000,
+        "delta": -0.0184,
+        "ci95_low": -0.0255,
+        "ci95_high": -0.0113,
+        "ci_excludes_zero": true
+      },
+      "e5-small": {
+        "n_queries": 1000,
+        "delta": -0.0055,
+        "ci95_low": -0.0123,
+        "ci95_high": 0.0012,
+        "ci_excludes_zero": false
+      },
+      "bge-base": {
+        "n_queries": 1000,
+        "delta": -0.0238,
+        "ci95_low": -0.0308,
+        "ci95_high": -0.017,
+        "ci_excludes_zero": true
+      }
+    },
+    "fiqa": {
+      "minilm": {
+        "n_queries": 648,
+        "delta": 0.0085,
+        "ci95_low": -0.0063,
+        "ci95_high": 0.0234,
+        "ci_excludes_zero": false
+      },
+      "bge-small": {
+        "n_queries": 648,
+        "delta": -0.009,
+        "ci95_low": -0.0228,
+        "ci95_high": 0.0052,
+        "ci_excludes_zero": false
+      },
+      "e5-small": {
+        "n_queries": 648,
+        "delta": 0.0074,
+        "ci95_low": -0.0064,
+        "ci95_high": 0.0215,
+        "ci_excludes_zero": false
+      },
+      "bge-base": {
+        "n_queries": 648,
+        "delta": -0.0099,
+        "ci95_low": -0.0242,
+        "ci95_high": 0.0043,
+        "ci_excludes_zero": false
+      }
+    }
+  }
+}
