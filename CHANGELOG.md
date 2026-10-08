@@ -7,6 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — independent claim audit (17 findings across 412 claims)
+An adversarial provenance pass over both manuscripts found 17 failures; this
+records the code-side repairs. The paper-side ones are in the round-9 notes
+below.
+
+- **Model revisions were not actually pinned.** The paper stated models were
+  "pinned to the exact Hugging Face revisions"; the loaders passed no
+  `revision=`, so the pin held only through how the offline cache happened to
+  be populated and a refresh could have swapped weights under a published
+  number. `research_bench_v3.py` now carries `MODEL_REVISIONS` and passes each
+  SHA to `SentenceTransformer`/`CrossEncoder`. All six models verified to load
+  from the offline cache with the pin in place. `bench/model-manifest.json`
+  added (it lived only outside version control).
+- **MiniLM ran at 256 tokens, not 512.** The paper said all encoders ran "at
+  each model's own 512-token limit". `all-MiniLM-L6-v2` ships
+  `max_seq_length = 256` (the other three ship 512) and the harness never
+  overrode it — so MiniLM saw a 256-token window on scidocs and fiqa, the two
+  corpora carrying the negative result. Disclosed in the paper; the harness
+  behaviour is unchanged because it is the shipped default.
+- **The mutation gate could not be invoked for `graph_leg`.**
+  `--paths-to-mutate` allowed only `fusion` and `scoring` while the default and
+  the mutant table both covered `graph_leg`. Added to the choices;
+  `bench/mutation-gate-run.txt` now records a real run (38 mutants, 37 killed,
+  100% over non-equivalent; fusion 15/15, scoring 14/14, graph_leg 8/8).
+- **Scoped branch coverage re-measured.** The addendum reported 87.28% with no
+  artifact behind it and the repo's own docs saying 85.3%. Measured over the
+  three gated modules with `coverage run --branch`: **100%** (79 statements,
+  30 branches). The paper now reports the measured figure.
+
+### Changed — paper revisions (round 9, 2026-10-08)
+- **Multiplicity family restored.** Three p-values were quoted from a 5-way
+  Holm family that included the CE contrast — the family §III-C explicitly
+  excludes ("not a fifth member of this one"). Under the declared m=4 family,
+  scifact/minilm vs pyserini is `p_Holm = 0.0440` (*significant*), not 0.0879,
+  and no BM25 contrast fails in any of the 16 cells; fiqa/minilm dense-only is
+  0.0721 not 0.1082; fiqa/e5-small dense-only is 0.0065 not 0.0097. All three
+  corrected.
+- **A cell claimed to clear the significance bar did not.** nfcorpus/minilm
+  w25 was cited as significant at `p=0.0041`; that is the raw p — its joint-27
+  `p_Holm` is 0.0569. The sentence now distinguishes the two levels.
+- **Delta range.** The main text called −0.0383 the minimum hybrid-window
+  delta; the true minimum is −0.0541, with three more cells below −0.0383. Both
+  occurrences corrected, and the conclusion's contradicting copy fixed.
+- **touche-2020 ratio.** "roughly 15× the largest collection" was the ratio to
+  scidocs, the *second*-largest; it is 6.6× fiqa, the largest. Corrected, with
+  the scidocs comparison stated separately as ~15×.
+- **Percentages were per query-window, not per query.** "improves approximately
+  22% of queries" reproduces (22.48/34.43/43.09) but over 10,380 pooled
+  query-window observations from 2,271 distinct queries. Scope stated in both
+  the prose and the figure caption.
+- **Two bad external citations.** The E5 reference pointed at
+  `arXiv:2210.07418`, which is "Information consumption and size in firms"
+  (verified against arXiv; E5 is `2212.03533`). The bm25s URL
+  `github.com/bm25s/bm25s` 404s; canonical is `github.com/xhluca/bm25s`
+  (verified 200). Both corrected.
+
 ### Fixed — multi-tenant baseline harness (three defects)
 Re-verifying the tenancy paper's Table IV against the harness that produces it
 found three problems, each of which made the table unreproducible or
