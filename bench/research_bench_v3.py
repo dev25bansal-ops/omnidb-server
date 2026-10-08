@@ -85,6 +85,19 @@ EMBEDDERS = {
 # 2-3 tiers stronger on BEIR rerank leaderboards).
 CROSS_ENCODER = "BAAI/bge-reranker-base"
 
+# Exact Hugging Face commit SHAs for every model in the study, mirroring
+# paper/manifest.json. Loaded explicitly as `revision=` so the harness
+# reproduces the published weights rather than whatever the cache holds.
+MODEL_REVISIONS = {
+    "all-MiniLM-L6-v2": "1110a243fdf4706b3f48f1d95db1a4f5529b4d41",
+    "BAAI/bge-small-en-v1.5": "5c38ec7c405ec4b44b94cc5a9bb96e735b38267a",
+    "intfloat/e5-small-v2": "ffb93f3bd4047442299a41ebb6fa998a38507c52",
+    "BAAI/bge-base-en-v1.5": "a5beb1e3e68b9ab74eb54cfd186867f64f240e1a",
+    "cross-encoder/ms-marco-MiniLM-L-6-v2":
+        "233902d25c440f23af6f7d6e94d2946bac0bee0a",
+    "BAAI/bge-reranker-base": "2cfc18c9415c912f9d8155881c133215df768a70",
+}
+
 HERE = Path(__file__).resolve().parent
 CACHE = HERE / ".cache3"
 CACHE.mkdir(exist_ok=True)
@@ -187,7 +200,14 @@ def get_embeddings(ds: str, emb_name: str, docs, queries) -> tuple[np.ndarray, n
     _hf_use_thread_local_client()
     from sentence_transformers import SentenceTransformer
 
-    model = SentenceTransformer(spec["model"])
+    # Pin the revision. These SHAs are the ones the paper's manifest records,
+    # and before this they were honoured only by *how the offline cache was
+    # populated* -- the loader itself passed no `revision=`, so a cache refresh
+    # could silently swap weights out from under a published number. With
+    # `revision=` set, a mismatch fails loudly instead.
+    rev = MODEL_REVISIONS.get(spec["model"])
+    model = SentenceTransformer(spec["model"], revision=rev) if rev \
+        else SentenceTransformer(spec["model"])
     dtexts = [(spec["d_prefix"] + t) if spec["d_prefix"] else t for _d, t in docs]
     qtexts = [(spec["q_prefix"] + q) if spec["q_prefix"] else q
               for _q, q, _r in queries]
@@ -378,7 +398,9 @@ def retrieve_qdrant(docs, queries, vecs, qvecs, home: Path):
 def cross_encode_rerank(queries, docs, ranked_lists) -> list[list[str]]:
     from sentence_transformers import CrossEncoder
 
-    model = CrossEncoder(CROSS_ENCODER, max_length=512)
+    model = CrossEncoder(
+        CROSS_ENCODER, max_length=512,
+        revision=MODEL_REVISIONS.get(CROSS_ENCODER))
     out = []
     for (qid, qtext, _rel), cands in zip(queries, ranked_lists):
         texts = [next(t for d, t in docs if d == d_id) for d_id in cands]
