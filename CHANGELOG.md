@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — multi-tenant baseline harness (three defects)
+Re-verifying the tenancy paper's Table IV against the harness that produces it
+found three problems, each of which made the table unreproducible or
+misleading.
+- **Single un-warmed timing sample.** `_time` called each query once, so the
+  Query ms column was dominated by page faults and cold-cache effects:
+  re-running the same harness on the same host moved individual rows by
+  **2–47×**. Query arms now take the median of 21 warmed calls (spread
+  1.0–1.2×); builds stay single-shot, being non-idempotent.
+- **The qdrant payload-filter arm timed an empty query.** Both tenants upserted
+  ids `0..199` into one collection, so the second tenant's points *overwrote*
+  the first's (same ids, different payload) and the querying tenant had **zero
+  points** — 0 hits against 10 for every other system, in the row that exists
+  to be the production analogue of the shared-index design. Ids are now
+  disjoint per tenant; all six arms return 10 rows.
+- **The two OmniDB arms returned 1 row against the others' 10.** They matched
+  `"unique1"`, a token held by exactly one row, so they timed a 1-row lookup.
+  They now match a term every row of the querying tenant carries.
+- `boundary_in_file` corrected from `False` to `True` on the
+  "OmniDB partitioned" row: it builds through the shipped per-tenant path, so
+  each tenant gets its own FTS5 table and vector sidecar. The `False` belonged
+  to the sibling "shared" arm, which sets it only after DROPping those tables.
+- A `_time` bug caught while fixing the above: it called `fn()` once to capture
+  the return value and then `repeat` more times, so `repeat=1` ran builds twice
+  and four baselines dropped off the table on "table already exists".
+- The paper's Table IV query times are regenerated from the corrected harness.
+  Its "measured identically" framing is narrowed: the two OmniDB rows are
+  lexically retrieved while the four external systems are vector search, so the
+  table shares corpus and `k` but not index type.
+
 ### Fixed — MCP handshake advertised the wrong version
 - `initialize` returned `serverInfo.version = "1.29.1"` — the version of the
   **mcp SDK package**, not of this server. `FastMCP` forwards no version to the
