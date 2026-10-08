@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — paper revisions (round 7, 2026-10-08)
+- **touche-2020 exclusion rationale was factually wrong and is replaced.**
+  Rounds 5 and 6 both asserted the collection's graded judgments were
+  near-degenerate ("one or two relevant documents per query") as the reason to
+  exclude it. The real qrels — `BeIR/webis-touche2020-qrels`, mirrored at
+  `resolve/main/test.tsv` (earlier fetch attempts 401'd because the dataset was
+  requested under the wrong name, `touche-2020`) — show **49 judged queries,
+  every one with at least 6 relevant documents, median 19, across three graded
+  levels**. The old claim is now explicitly flagged as false in the text. The
+  exclusion stands, but on the two grounds that are true: 382k documents make a
+  full embedding pass a ~10-hour job against a hardware budget that the other
+  four corpora exhaust in minutes, and only 49 queries carry judgments, which is
+  too few for the per-query paired tests the grid is built on. Both statements
+  of the rationale (Sec. IV and Sec. VI) were stale and both are corrected.
+- Table III (architecture-matched controls) widened from `table` to `table*`:
+  the 8-column body was set at `\footnotesize` inside a single column and was
+  cramped to the point of being hard to read. Now full-width, same font size.
+- "All three arms run the same index" removed. It is not true as written — the
+  sparse-only and dense-only arms necessarily execute different legs. The
+  caption now says the arms share a corpus snapshot, preprocessing, and
+  retrieval stack, and differ in which legs execute and at what fusion weights.
+- "Bounds nDCG at the ceiling" replaced: the recall gap is a headroom
+  *measurement*, not a bound on achievable nDCG. Prose now says first-stage
+  recall limits which relevant documents are available for recovery.
+- The 2{,}000-document capped pre-run is gone. It predated the switch to
+  per-corpus full collections and no longer describes what was executed.
+- "The lexical leg is neutralized" softened to a statement about relative
+  weakness — the lexical leg contributes little on SciDocs — rather than an
+  absolute claim that it stops working.
+
 ### Changed — paper revisions (round 6, 2026-10-08)
 - **Table II now carries the headline evidence.** Added `Delta_CE` and the
   16-way family-corrected p for every cell, with the four survivors daggered
