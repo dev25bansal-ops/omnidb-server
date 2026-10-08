@@ -1,0 +1,56 @@
+baseline: ........................................                                 [100%]
+[01] KILLED         exp(-age/hl) -> exp(age/hl): sign flip inverts recency decay
+[02] KILLED         drop max clamp on age_ms: negative age explodes exponent
+[03] KILLED         drop max clamp on half_life_ms: zero half-life divides by zero
+[04] KILLED         drop max clamp on access_count: negative count poisons log1p
+[05] KILLED         log1p -> log: frequency of 0 access becomes -inf
+[06] KILLED         recency_weight default 0.15 -> 0.0: recency stops contributing
+[07] KILLED         freq_weight default 0.05 -> 0.0: frequency stops contributing
+[08] KILLED         recency_weight * recency -> + recency: weights ignored
+[09] KILLED         return drops recency component (returns rrf as placeholder)
+[10] KILLED         return drops frequency component (returns rrf as placeholder)
+[11] KILLED         score omits recency term entirely
+[12] KILLED         score omits frequency term entirely
+[13] KILLED         score omits rrf term entirely (pure behavioral score)
+[14] KILLED         half-life floor 1e-3 -> 1e6: decay effectively frozen
+[15] KILLED         rrf denominator k+position+1 -> k+position: off-by-one rank weight
+[16] KILLED         rrf k+k -> k*k: quadratic rank damping
+[17] KILLED         rrf position+1 removed AND k dropped: plain reciprocal of raw index
+[18] KILLED         rrf accumulation replaced by overwrite: later ranking wins
+[19] KILLED         rrf scores all set to 0.0: fusion signal destroyed
+[20] KILLED         rrf enumerate position offset dropped (+1 removal)
+[21] KILLED         rrf default k=60 -> k=1: much steeper rank decay
+[22] KILLED         rrf ignores the second ranking list entirely
+[23] KILLED         decay multiplication removed: walk does not discount by distance
+[24] KILLED         decay inverted: 1/decay makes deeper nodes STRONGER
+[25] KILLED_TIMEOUT seed exclusion removed: leg re-emits its own seeds
+[26] KILLED_TIMEOUT mass kernel constant: every seed carries identical restart mass
+[27] KILLED         per-seed quota destroyed: one global budget reintroduces hub starvation
+[28] KILLED         finalized check removed: higher-key proposal overwrites the true max
+[29] KILLED         id tie-break removed: ties resolved by dict/set order
+[30] KILLED         budget ignored: expansion runs to graph exhaustion
+[31] KILLED         rrf returns empty dict: no fused candidates at all
+[32] KILLED         regex \w+ -> \w: single-char tokens gut recall
+[33] SURVIVED       quote-doubling removal: embedded quotes break out of FTS quoting
+[34] KILLED         OR join -> AND join: recall collapses to conjunctive match
+[35] KILLED         max_terms slice removed: unbounded term count
+[36] KILLED         .lower() removed: case sensitivity restored
+[37] KILLED         max_terms default 24 -> 1: only first token searched
+[38] KILLED         empty text yields [''] token instead of empty expression
+
+38 mutants: 37 killed, 1 survived, 0 n/a, 1 declared equivalent
+mutation score (equivalent excluded): 100.0% (37/37)
+checksum verification: OK - sources byte-identical to originals
+MUTATION GATE PASSED
+=== fusion ===
+mutation score (equivalent excluded): 100.0% (15/15)
+checksum verification: OK - sources byte-identical to originals
+MUTATION GATE PASSED
+=== scoring ===
+mutation score (equivalent excluded): 100.0% (14/14)
+checksum verification: OK - sources byte-identical to originals
+MUTATION GATE PASSED
+=== graph_leg ===
+mutation score (equivalent excluded): 100.0% (8/8)
+checksum verification: OK - sources byte-identical to originals
+MUTATION GATE PASSED

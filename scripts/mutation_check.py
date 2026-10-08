@@ -236,8 +236,9 @@ def main() -> int:
         help="minimum mutation score (percent) required to pass; default 85",
     )
     parser.add_argument(
-        "--paths-to-mutate", action="append", choices=("fusion", "scoring"),
-        help="restrict to one module; repeatable. default: both",
+        "--paths-to-mutate", action="append",
+        choices=("fusion", "scoring", "graph_leg"),
+        help="restrict to one module; repeatable. default: all three",
     )
     parser.add_argument(
         "--fail-on-not-applicable", dest="fail_na", action="store_true",
