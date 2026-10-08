@@ -55,10 +55,44 @@ def _vecs(n: int, seed: int) -> np.ndarray:
     return v / np.linalg.norm(v, axis=1, keepdims=True)
 
 
-def _time(fn) -> tuple[float, object]:
-    t0 = time.perf_counter()
-    out = fn()
-    return (time.perf_counter() - t0) * 1000, out
+def _time(fn, *, warmup: int = 0, repeat: int = 1) -> tuple[float, object]:
+    """Median-of-N wall time in milliseconds, after `warmup` untimed calls.
+
+    The defaults time a single call, which is what a *build* needs: builds are
+    not idempotent (a second call hits "table already exists"), so they must
+    be timed once. Query arms pass `warmup=5, repeat=21` and get a median.
+
+    Before this existed, queries were also timed with one un-warmed call, and
+    the reported column was unreproducible: re-running the same harness on the
+    same host moved individual rows by 2-47x, because a single sample of a
+    sub-millisecond operation is dominated by page faults and cold-cache
+    effects. A median over repeated calls is the statistic the table can
+    support; a single call is never taken as the point estimate.
+
+    The return value `out` comes from the first *timed* call, not from a
+    separate untimed one. Getting that wrong is not cosmetic: an earlier
+    revision called `fn()` once to capture `out` and then `repeat` more times,
+    so `repeat=1` (the build path) ran the build twice and the second call
+    failed on "table already exists", taking four baselines off the table.
+    """
+    for _ in range(warmup):
+        fn()
+    samples: list[float] = []
+    out = None
+    for i in range(max(1, repeat)):
+        t0 = time.perf_counter()
+        result = fn()
+        samples.append((time.perf_counter() - t0) * 1000)
+        if i == 0:
+            out = result
+    samples.sort()
+    return samples[len(samples) // 2], out
+
+
+# Query arms use this: identical to _time's old call signature at the call
+# sites, but with the repetition a sub-millisecond measurement needs.
+def _time_query(fn) -> tuple[float, object]:
+    return _time(fn, warmup=5, repeat=21)
 
 
 # --------------------------------------------------------------------------
@@ -103,7 +137,7 @@ def baseline_sqlite_vec() -> dict:
                 "WHERE embedding MATCH ? AND k = 10",
                 (q.tobytes(),)).fetchall()
 
-        search_ms, hits = _time(search)
+        search_ms, hits = _time_query(search)
         return {
             "available": True,
             "isolation_unit": "table per tenant (one collection per tenant)",
@@ -137,10 +171,18 @@ def baseline_qdrant(payload_filter: bool = True) -> dict:
         if payload_filter:
             client.create_collection("shared", vectors_config=models.VectorParams(
                 size=DIM, distance=models.Distance.COSINE))
-            for tenant, seed in ((QUERY_TENANT, 1), (FOREIGN_TENANT, 2)):
+            # Disjoint id ranges per tenant. Both tenants previously upserted
+            # ids 0..199 into the same collection, so the second tenant's points
+            # *overwrote* the first's (same ids, different payload) and the
+            # querying tenant ended up with ZERO points -- this arm was timing
+            # an empty query and reporting 0 hits, against 10 for every other
+            # system. The row exists to be the production analogue of the
+            # shared-index design, so an empty result defeats its purpose.
+            for i, (tenant, seed) in enumerate(
+                    ((QUERY_TENANT, 1), (FOREIGN_TENANT, 2))):
                 client.upsert(collection_name="shared",
                               points=models.Batch(
-                              ids=list(range(200)),
+                              ids=list(range(i * 1000, i * 1000 + 200)),
                               vectors=_vecs(200, seed).tolist(),
                               payloads=[{"tenant": tenant}] * 200))
         else:
@@ -169,7 +211,7 @@ def baseline_qdrant(payload_filter: bool = True) -> dict:
         res = client.query_points(QUERY_TENANT, query=q, limit=10)
         return getattr(res, "points", res)
 
-    search_ms, hits = _time(search)
+    search_ms, hits = _time_query(search)
     return {
         "available": True,
         "isolation_unit": ("payload filter over a shared collection"
@@ -208,7 +250,7 @@ def baseline_lancedb() -> dict:
             q = _vecs(1, seed=99)[0].tolist()
             return db.open_table(QUERY_TENANT).search(q).limit(10).to_list()
 
-        search_ms, hits = _time(search)
+        search_ms, hits = _time_query(search)
         return {
             "available": True,
             "isolation_unit": "table per tenant",
@@ -268,13 +310,20 @@ def baseline_omnidb_shared() -> dict:
             store.conn.commit()
 
             def search():
+                # Match a term carried by every row of the querying tenant
+                # ("acme"), then take the top 10 -- so this arm returns 10 rows
+                # like the four vector systems do. The previous query matched
+                # '"unique1"', a token held by exactly one row, so it timed a
+                # 1-row lookup and returned 1 hit against their 10. The table
+                # claims all systems were measured identically; this makes the
+                # row counts (and so the work) agree.
                 return store.conn.execute(
                     "SELECT f.rowid FROM memory_fts f JOIN memories m "
                     "ON m.id=f.rowid WHERE memory_fts MATCH ? "
                     "AND m.tenant_id = ? LIMIT 10",
-                    ('"unique1"', QUERY_TENANT)).fetchall()
+                    (QUERY_TENANT, QUERY_TENANT)).fetchall()
 
-            search_ms, hits = _time(search)
+            search_ms, hits = _time_query(search)
             return {
                 "available": True,
                 "isolation_unit": "one shared index + tenant predicate",
@@ -319,15 +368,24 @@ def baseline_omnidb_partitioned() -> dict:
             build_ms, _ = _time(build)
 
             def search():
+                # Same query as the shared arm, against this tenant's own
+                # table: 10 rows returned, so the comparison is like-for-like.
                 return store.conn.execute(
                     'SELECT rowid FROM "fts_acme" WHERE "fts_acme" MATCH ? '
-                    "LIMIT 10", ('"unique1"',)).fetchall()
+                    "LIMIT 10", (QUERY_TENANT,)).fetchall()
 
-            search_ms, hits = _time(search)
+            search_ms, hits = _time_query(search)
             return {
                 "available": True,
                 "isolation_unit": "one index per tenant",
-                "boundary_in_file": False,
+                # True, not False: `build` above writes through the shipped
+                # per-tenant path, so each tenant gets its own FTS5 table
+                # (fts_acme, fts_globex) and its own vector sidecar file. The
+                # boundary is on disk -- which is what this row's `note` says
+                # and what Table~\ref{tab:baselines} in the paper reports. The
+                # False here was the odd one out: the sibling "shared" arm is
+                # what sets False, and only after DROPping those tables.
+                "boundary_in_file": True,
                 "build_ms": build_ms,
                 "query_ms": search_ms,
                 "hits": len(hits),

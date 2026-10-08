@@ -5,19 +5,19 @@
       "available": true,
       "isolation_unit": "one shared index + tenant predicate",
       "boundary_in_file": false,
-      "build_ms": 576.2336999978288,
-      "query_ms": 0.3152999997837469,
-      "hits": 1,
+      "build_ms": 83.5127000027569,
+      "query_ms": 0.008700008038431406,
+      "hits": 10,
       "note": "the layout this paper argues against; included as the reference point, not as a competitor"
     },
     {
       "name": "OmniDB partitioned (this paper)",
       "available": true,
       "isolation_unit": "one index per tenant",
-      "boundary_in_file": false,
-      "build_ms": 358.32680000021355,
-      "query_ms": 0.2749999985098839,
-      "hits": 1,
+      "boundary_in_file": true,
+      "build_ms": 81.0147999873152,
+      "query_ms": 0.01309999788645655,
+      "hits": 10,
       "note": "separate sidecar files: the boundary exists on disk, not just in the query"
     },
     {
@@ -25,8 +25,8 @@
       "available": true,
       "isolation_unit": "table per tenant (one collection per tenant)",
       "boundary_in_file": true,
-      "build_ms": 162.08819999883417,
-      "query_ms": 1.3153000036254525,
+      "build_ms": 18.730600000708364,
+      "query_ms": 0.1647000026423484,
       "hits": 10,
       "note": "no cross-tenant index at all; the tenant's rows are physically separated within one database file"
     },
@@ -35,8 +35,8 @@
       "available": true,
       "isolation_unit": "collection per tenant",
       "boundary_in_file": true,
-      "build_ms": 168.66390000359388,
-      "query_ms": 14.374900005350355,
+      "build_ms": 7.078900001943111,
+      "query_ms": 0.13010000111535192,
       "hits": 10,
       "note": "one index per tenant"
     },
@@ -45,9 +45,9 @@
       "available": true,
       "isolation_unit": "payload filter over a shared collection",
       "boundary_in_file": false,
-      "build_ms": 96.01479999400908,
-      "query_ms": 4.700799996498972,
-      "hits": 0,
+      "build_ms": 7.3188999958802015,
+      "query_ms": 1.638799993088469,
+      "hits": 10,
       "note": "ranking computed over the shared collection; filtering is post-hoc at query time"
     },
     {
@@ -55,8 +55,8 @@
       "available": true,
       "isolation_unit": "table per tenant",
       "boundary_in_file": true,
-      "build_ms": 463.66820000548614,
-      "query_ms": 773.9235000044573,
+      "build_ms": 22.675500003970228,
+      "query_ms": 2.7242999931331724,
       "hits": 10
     }
   ]
