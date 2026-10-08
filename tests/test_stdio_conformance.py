@@ -46,6 +46,14 @@ def _run_session(home: Path) -> bool:
             async with ClientSession(read, write) as session:
                 init = await asyncio.wait_for(session.initialize(), 30)
                 assert init.serverInfo.name == "omnidb"
+                # The version is ours, not the mcp SDK's. FastMCP forwards no
+                # version to the low-level server, whose fallback is the
+                # *SDK* version -- so this advertised e.g. "1.29.1". Asserting
+                # only the name is what let that stand.
+                from omnidb_server import __version__ as ours
+                assert init.serverInfo.version == ours, (
+                    f"serverInfo.version {init.serverInfo.version!r} "
+                    f"is not OmniDB's {ours!r}")
 
                 names = {t.name for t in (await session.list_tools()).tools}
                 assert EXPECTED_TOOLS <= names, f"missing tools: {EXPECTED_TOOLS - names}"

@@ -38,6 +38,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from . import __version__
 from .tenancy import TenantError, TenantRegistry, load_registry
 
 # Where a resolved tenant is stashed on the MCP access token. A private claim
@@ -192,6 +193,9 @@ def run_http(
         token_verifier=token_verifier,
         auth=auth_settings,
     )
+    # Same defect as the stdio transport: FastMCP's version fallback is the mcp
+    # SDK's version, not ours (see `create_mcp`).
+    mcp._mcp_server.version = __version__
 
     # Reuse the exact tool surface stdio exposes. Two hand-maintained copies of
     # ten tools would drift, and a drift here is a *security* drift: a tool

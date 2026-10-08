@@ -10,6 +10,7 @@ from pathlib import Path
 # duration (a slow LLM consolidation could stall the whole server).
 import anyio
 
+from . import __version__
 from .store import E_CONSTRAINT, E_NOT_FOUND, MemoryStore, StoreError
 from .tenancy import DEFAULT_TENANT
 
@@ -175,6 +176,11 @@ def create_mcp(store):
     from mcp.server.fastmcp import FastMCP
 
     mcp = FastMCP("omnidb")
+    # FastMCP forwards no version to the low-level server, which then falls
+    # back to the *SDK's* version -- so an `initialize` handshake advertised
+    # "1.29.1" (the mcp package) as ours. Set it explicitly so clients that
+    # report the server version report the server's.
+    mcp._mcp_server.version = __version__
     attach_tools(mcp, store, unscoped_search=True)
     return mcp
 
