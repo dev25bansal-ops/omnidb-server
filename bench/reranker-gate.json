@@ -1,0 +1,53 @@
+{
+  "checked_unix": 1791563263.5616922,
+  "device": "cpu",
+  "failures": [],
+  "max_length": 512,
+  "models": {
+    "mixedbread-ai/mxbai-rerank-base-v2": {
+      "note": "relevant outranks irrelevant on both probe pairs",
+      "passed": true,
+      "revision": "3ea9d4dffa7d12a4f366be8e275c349de9fc9865",
+      "scores": [
+        1.0,
+        0.003479,
+        1.0,
+        0.004211
+      ],
+      "seconds": 8.31
+    },
+    "ncbi/MedCPT-Cross-Encoder": {
+      "note": "relevant outranks irrelevant on both probe pairs",
+      "passed": true,
+      "revision": "71caf65d4927987813984f54c284405a13fcca49",
+      "scores": [
+        0.999849,
+        0.0,
+        0.999484,
+        1e-06
+      ],
+      "seconds": 0.9
+    }
+  },
+  "pairs": [
+    [
+      "What is hypertension?",
+      "Hypertension is a long-term medical condition of high blood pressure."
+    ],
+    [
+      "What is hypertension?",
+      "A poem about the ocean and sailing ships."
+    ],
+    [
+      "How do neural networks learn?",
+      "Neural networks are trained by gradient descent on a loss function."
+    ],
+    [
+      "How do neural networks learn?",
+      "The recipe calls for two cups of flour."
+    ]
+  ],
+  "result": "OK",
+  "sentence_transformers": "5.7.0",
+  "transformers": "5.10.2"
+}

@@ -11,6 +11,7 @@ Usage: python bench/verify_rerankers.py [--models m1,m2] [--device cuda]
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 import time
@@ -35,6 +36,8 @@ def main() -> int:
     ap.add_argument("--models", default=",".join(RERANKER_REVISIONS))
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--max-length", type=int, default=512)
+    ap.add_argument("--json", default=None,
+                    help="write the gate verdict per model here, as evidence")
     args = ap.parse_args()
 
     cache = (HERE / ".cache3" / "hf").resolve()
@@ -43,11 +46,17 @@ def main() -> int:
     os.environ["HF_HUB_OFFLINE"] = "1"
 
     import transformers
+    import sentence_transformers
     from sentence_transformers import CrossEncoder
 
-    print(f"sentence-transformers {__import__('sentence_transformers').__version__}, "
+    print(f"sentence-transformers {sentence_transformers.__version__}, "
           f"transformers {transformers.__version__}, device={args.device}")
     failures = []
+    evidence = {"checked_unix": time.time(),
+                "sentence_transformers": sentence_transformers.__version__,
+                "transformers": transformers.__version__,
+                "device": args.device, "max_length": args.max_length,
+                "pairs": [list(p) for p in PAIRS], "models": {}}
     for model_id in args.models.split(","):
         if model_id not in RERANKER_REVISIONS:
             print(f"FAIL {model_id}: not a pinned study model")
@@ -66,6 +75,14 @@ def main() -> int:
             print(f"{verdict} {model_id:<46} rev={revision[:10]} "
                   f"scores={[round(s, 4) for s in scores]} "
                   f"sec={time.perf_counter() - t0:.1f}")
+            evidence["models"][model_id] = {
+                "revision": revision, "passed": bool(ok),
+                "scores": [round(s, 6) for s in scores],
+                "seconds": round(time.perf_counter() - t0, 2),
+                "note": ("relevant outranks irrelevant on both probe pairs"
+                         if ok else
+                         "WRONG ORDER: model loaded but does not rank relevance"),
+            }
             if not ok:
                 failures.append(model_id)
             del model
@@ -79,7 +96,20 @@ def main() -> int:
             print(f"FAIL {model_id:<46} {type(exc).__name__}: {str(exc)[:220]} "
                   f"sec={time.perf_counter() - t0:.1f}")
             failures.append(model_id)
+            evidence["models"][model_id] = {
+                "revision": revision, "passed": False,
+                "error": f"{type(exc).__name__}: {str(exc)[:220]}",
+                "seconds": round(time.perf_counter() - t0, 2),
+            }
 
+    evidence["failures"] = failures
+    evidence["result"] = "FAIL" if failures else "OK"
+    if args.json:
+        dest = Path(args.json)
+        tmp = dest.with_suffix(dest.suffix + ".part")
+        tmp.write_text(json.dumps(evidence, indent=2, sort_keys=True), encoding="utf-8")
+        os.replace(tmp, dest)
+        print(f"wrote {dest}")
     print()
     print(f"RESULT: {'FAIL' if failures else 'OK'} "
           f"({len(failures)} failing: {failures})")
