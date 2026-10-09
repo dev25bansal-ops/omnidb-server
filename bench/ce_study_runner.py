@@ -171,6 +171,19 @@ def qrels_metrics(ranking: list[str], rel: dict[str, int], k: int = K) -> dict:
             "unjudged_at10": (k - judged) / float(k)}
 
 
+def condensed_ndcg(ranking: list[str], rel: dict[str, int], k: int = K) -> float:
+    """nDCG@10 computed after dropping every unjudged document from the list.
+
+    Robustness-only: standard BEIR nDCG counts unjudged documents as
+    non-relevant, so a system that returns more unjudged documents is not
+    penalised for a retrieval error it cannot be shown to have made. This
+    metric removes that asymmetry by scoring only judged documents, in their
+    original relative order.
+    """
+    judged = [d for d in ranking if d in rel]
+    return float(ndcg_at_k(judged, rel, k))
+
+
 def oracle_ndcg(pool: list[str], rel: dict[str, int], k: int = K) -> float:
     ideal = sorted(pool, key=lambda d: (-rel.get(d, 0), d))
     return float(ndcg_at_k(ideal, rel, k))
@@ -214,17 +227,42 @@ def prepare_run(args, split_manifest) -> Path:
         "created_unix": time.time(),
     }
     config_path = output / "run-config.json"
+    # `code_sha` is the one field allowed to move, and only through an explicit,
+    # recorded update: a run that spans a commit is normal, but the provenance
+    # record must say so rather than silently diff. Every other field is frozen.
+    mutable = {"created_unix", "code_sha", "code_sha_history"}
     if config_path.exists():
         existing = json.loads(config_path.read_text(encoding="utf-8"))
-        comparable = {k: v for k, v in existing.items() if k != "created_unix"}
-        target = {k: v for k, v in config.items() if k != "created_unix"}
+        if args.record_code_sha_change is not None:
+            if existing.get("code_sha") == config["code_sha"]:
+                raise ValueError("recorded code SHA already matches; nothing to change")
+            history = list(existing.get("code_sha_history") or [])
+            history.append({"from": existing.get("code_sha"),
+                            "to": config["code_sha"],
+                            "reason": args.record_code_sha_change,
+                            "recorded_unix": time.time()})
+            existing["code_sha"] = config["code_sha"]
+            existing["code_sha_history"] = history
+            atomic_json(config_path, existing)
+            print(f"recorded code SHA change "
+                  f"{history[-1]['from'][:8]} -> {history[-1]['to'][:8]}")
+            return output
+        comparable = {k: v for k, v in existing.items() if k not in mutable}
+        target = {k: v for k, v in config.items() if k not in mutable}
         if comparable != target:
             raise ValueError("resume refused: immutable run config mismatch")
+        if existing.get("code_sha") != config["code_sha"]:
+            raise ValueError(
+                f"resume refused: code SHA moved {existing.get('code_sha')[:8]} -> "
+                f"{config['code_sha'][:8]}; re-run with "
+                f"--record-code-sha-change \"<why the run may span this commit>\" "
+                f"to record it in the artifact")
         if not args.resume:
             raise FileExistsError(f"{output} exists; pass --resume")
     else:
         if args.resume and output.exists() and any(output.iterdir()):
             raise ValueError("resume refused: nonempty output without config")
+        config["code_sha_history"] = []
         atomic_json(config_path, config)
     return output
 
@@ -347,7 +385,9 @@ def score_partition(args, output, partition: str):
                         "judged_at10_base":qrels_metrics(pool,qrels)["judged_at10"],
                         "judged_at10_ce":qrels_metrics(ce_order,qrels)["judged_at10"],
                         "unjudged_at10_base":qrels_metrics(pool,qrels)["unjudged_at10"],
-                        "unjudged_at10_ce":qrels_metrics(ce_order,qrels)["unjudged_at10"]})
+                        "unjudged_at10_ce":qrels_metrics(ce_order,qrels)["unjudged_at10"],
+                        "condensed_base":condensed_ndcg(pool,qrels),
+                        "condensed_ce":condensed_ndcg(ce_order,qrels)})
                     count+=1
                     if len(records)>=100:
                         append_records(score_path,records); records.clear()
@@ -438,7 +478,8 @@ def apply_frozen_test_blends(output: Path) -> None:
             row={**row,"frozen_alpha":choice["alpha"],"frozen_rrf_k":choice["rrf_k"],
                  "blend_ranking":ranking,"blend_ndcg10":qrels_metrics(ranking,rel)["ndcg10"],
                  "judged_at10_blend":qrels_metrics(ranking,rel)["judged_at10"],
-                 "unjudged_at10_blend":qrels_metrics(ranking,rel)["unjudged_at10"]}
+                 "unjudged_at10_blend":qrels_metrics(ranking,rel)["unjudged_at10"],
+                 "condensed_blend":condensed_ndcg(ranking,rel)}
             f.write(json.dumps(row,sort_keys=True,separators=(",",":"))+"\n")
         f.flush(); os.fsync(f.fileno())
     os.replace(tmp,result_path)
@@ -474,6 +515,9 @@ def main() -> int:
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--resume", action="store_true")
+    parser.add_argument("--record-code-sha-change", metavar="REASON", default=None,
+                        help="record that this run spans a commit, with a reason; "
+                             "writes to code_sha_history in the run config")
     parser.add_argument("--accept-short-pools", action="store_true",
                         help="record actual short pool sizes rather than aborting")
     args = parser.parse_args()

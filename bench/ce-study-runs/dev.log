@@ -1,0 +1,9 @@
+Traceback (most recent call last):
+  File "D:\OMNIDB\omnidb-server\bench\ce_study_runner.py", line 531, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "D:\OMNIDB\omnidb-server\bench\ce_study_runner.py", line 506, in main
+    output = prepare_run(args, split_manifest)
+  File "D:\OMNIDB\omnidb-server\bench\ce_study_runner.py", line 235, in prepare_run
+    raise ValueError("resume refused: immutable run config mismatch")
+ValueError: resume refused: immutable run config mismatch

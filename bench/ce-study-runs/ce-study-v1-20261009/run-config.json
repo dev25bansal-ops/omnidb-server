@@ -1,6 +1,14 @@
 {
   "batch_size": 4,
-  "code_sha": "36d848b059ce3d836fb4d2da7696796e6ea0bae9",
+  "code_sha": "6939b184501a759bb450fb1ac58cc222b2dc8cbf",
+  "code_sha_history": [
+    {
+      "from": "36d848b059ce3d836fb4d2da7696796e6ea0bae9",
+      "reason": "post-pools commit added only condensed_ndcg to the scoring path (+10 lines); retrieval code byte-identical at 36d848b, verified by git diff",
+      "recorded_unix": 1791520762.5398638,
+      "to": "6939b184501a759bb450fb1ac58cc222b2dc8cbf"
+    }
+  ],
   "corpora": [
     "nfcorpus",
     "scifact",

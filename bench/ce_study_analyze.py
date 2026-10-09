@@ -74,6 +74,10 @@ def summarize(run_dir: Path, n_perm=100_000, n_boot=20_000):
             "judged_at10_blend_mean":float(np.mean([r["judged_at10_blend"] for r in cell])),
             "unjudged_at10_base_mean":float(np.mean([r["unjudged_at10_base"] for r in cell])),
             "unjudged_at10_blend_mean":float(np.mean([r["unjudged_at10_blend"] for r in cell])),
+            "condensed_base_mean":float(np.mean([r["condensed_base"] for r in cell])),
+            "condensed_blend_mean":float(np.mean([r["condensed_blend"] for r in cell])),
+            "condensed_delta_mean":float(np.mean([r["condensed_blend"]-r["condensed_base"]
+                                                  for r in cell])),
         })
     adjusted=holm_adjust(pvalues)
     by_name={r["cell"]:r for r in summaries}

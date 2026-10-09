@@ -30,6 +30,7 @@ so the report can be re-rendered without re-embedding. Full run ~3-4h CPU
 from __future__ import annotations
 
 import io
+import shutil
 import json
 import math
 import statistics
@@ -314,11 +315,18 @@ def _clear_tenant_sidecars(home: Path) -> None:
 def _install_benchmark_vectors(store, docs, vecs, qvecs, home: Path):
     """Install corpus vectors behind the tenant router used by production recall().
 
-    `remember_many` has already routed the store's own hashing vectors into the
-    default tenant's backend, and that backend is cached in memory; the disk
-    sidecars are deleted above, but the cached object is not. Both must be
-    dropped, or the corpus vectors are appended onto rows that are about to be
-    discarded (broadcast error: 3633x384 into 7266x384).
+    Three things hold the store's own hashing vectors at this point and all
+    three must be dropped, or the corpus vectors are appended onto rows that
+    are about to be discarded (broadcast error: 3633x384 into 7266x384):
+
+      1. the on-disk sidecar (deleted before the store is even constructed, and
+         again here);
+      2. the *old* router's in-memory backend;
+      3. the *new* router's backend, which `open_vector_index` may populate from
+         a sidecar the store's debounced flush wrote between the delete and the
+         open. This third one is what a resume actually hits, and it is why the
+         cleanup below clears the new router explicitly rather than trusting the
+         delete to have landed first.
     """
     from omnidb_server.tenancy import DEFAULT_TENANT
     from omnidb_server.vector_index import open_vector_index
@@ -328,14 +336,53 @@ def _install_benchmark_vectors(store, docs, vecs, qvecs, home: Path):
         "SELECT id FROM memories ORDER BY id")]
     store._mark_dirty()
     _clear_tenant_sidecars(home)
-    router = store.index
+    old_router = store.index
+    if hasattr(old_router, "_backends"):
+        with old_router._lock:
+            old_router._backends.pop(DEFAULT_TENANT, None)
+    router = open_vector_index(home, "brute", shared.dim, len(ids))
+    # The freshly opened router must start empty for this tenant regardless of
+    # what was on disk a moment ago.
     if hasattr(router, "_backends"):
         with router._lock:
             router._backends.pop(DEFAULT_TENANT, None)
-    router = open_vector_index(home, "brute", shared.dim, len(ids))
     router.add(ids, vecs, DEFAULT_TENANT)
+    # The corpus vectors must not reach disk. store.close() flushes whatever
+    # index is installed, and a persisted 384-d corpus sidecar is read back by
+    # the *next* run, which then appends onto it (broadcast error 3633x384 into
+    # 7266x384) -- exactly what a resume hits, and it compounds each time.
+    # `MultiTenantIndexRouter` uses __slots__, so the method cannot be shadowed
+    # per instance; instead the sidecar path is pointed at a scratch file that
+    # is deleted on close. The router's own directory is untouched for the
+    # store's normal (hashing) vectors.
+    scratch = home / "bench-scratch-vectors.npz"
+    if scratch.exists():
+        scratch.unlink()
+    for tenant_backend in getattr(router, "_backends", {}).values():
+        if hasattr(tenant_backend, "path"):
+            tenant_backend.path = scratch
+        if hasattr(tenant_backend, "_deleted_path"):
+            tenant_backend._deleted_path = scratch.with_suffix(".deleted.json")
     store.index = router
     store.embedder = shared
+
+
+def _fresh_home(home: Path) -> None:
+    """Start a retrieval pass from an empty home.
+
+    Every pass rebuilds the corpus with `remember_many`, but the home is a
+    persistent SQLite database: without this, a second pass over the same home
+    inserts the corpus *again*, doubling the memories table (30 docs -> 60 ids)
+    and then failing to install 30 vectors into a 60-row index. This is the
+    bug that made a resumed pools run crash with
+    "could not broadcast input array from shape (3633,384) into shape (7266,384)"
+    -- the "7266" was 3633 documents inserted twice. Deleting the home is
+    correct rather than merely convenient: nothing in a pass is meant to
+    survive it, and the corpus is regenerated from the cached BEIR parquet.
+    """
+    if home.exists():
+        shutil.rmtree(home)
+    home.mkdir(parents=True, exist_ok=True)
 
 
 def retrieve_omnidb(docs, queries, vecs, qvecs, home: Path, *, fetch=None, limit=None):
@@ -347,6 +394,7 @@ def retrieve_omnidb(docs, queries, vecs, qvecs, home: Path, *, fetch=None, limit
     limit = fetch if limit is None else int(limit)
     if not 1 <= limit <= fetch:
         raise ValueError("require 1 <= limit <= fetch")
+    _fresh_home(home)
     cfg = Config.from_env(home)
     cfg.corpus_mode = True
     cfg.dense_weight, cfg.sparse_weight = DENSE_W, round(1.0 - DENSE_W, 2)
@@ -372,6 +420,7 @@ def retrieve_omnidb_dense_only(docs, queries, vecs, qvecs, home: Path, *, limit=
     from omnidb_server.server import build_stack
 
     limit = RERANK_CANDS if limit is None else int(limit)
+    _fresh_home(home)
     cfg = Config.from_env(home)
     cfg.corpus_mode = True
     cfg.dense_weight, cfg.sparse_weight = 1.0, 0.0
@@ -395,6 +444,7 @@ def retrieve_omnidb_sparse_only(docs, queries, vecs, qvecs, home: Path, *, limit
     from omnidb_server.server import build_stack
 
     limit = RERANK_CANDS if limit is None else int(limit)
+    _fresh_home(home)
     cfg = Config.from_env(home)
     cfg.corpus_mode = True
     cfg.dense_weight, cfg.sparse_weight = 0.0, 1.0
@@ -437,6 +487,7 @@ def retrieve_pyserini(docs, queries, vecs, qvecs, home: Path, *, k=None):
     from pyserini.index.lucene import LuceneIndexer
     from pyserini.search.lucene import LuceneSearcher
 
+    _fresh_home(home)
     index_dir = home / "pyserini-idx"
     index_dir.mkdir(parents=True, exist_ok=True)
     indexer = LuceneIndexer(str(index_dir))
