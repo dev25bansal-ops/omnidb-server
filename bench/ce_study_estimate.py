@@ -17,13 +17,18 @@ from ce_study_runner import (  # noqa: E402
 
 # Measured with bench/bench_reranker_throughput.py on the RTX 5060 Laptop GPU
 # (batch 32, max_length 512, 1500 pairs).
+# REALISTIC rates: distinct documents, batch 32, measured by
+# bench/measure_realistic_rates.py. The earlier numbers in this file came from
+# bench_reranker_throughput.py, which repeated one pair and was therefore 3-8x
+# optimistic (the GPU caches an identical batch).
 PAIRS_PER_SEC = {
-    "cross-encoder/ms-marco-MiniLM-L-6-v2": 3251.6,
-    "BAAI/bge-reranker-base": 514.2,
-    "BAAI/bge-reranker-large": 157.1,
-    "mixedbread-ai/mxbai-rerank-base-v2": 163.1,
-    "ncbi/MedCPT-Cross-Encoder": 688.0,
+    "cross-encoder/ms-marco-MiniLM-L-6-v2": 731.6,
+    "BAAI/bge-reranker-base": 93.4,
+    "BAAI/bge-reranker-large": 26.8,
+    "mixedbread-ai/mxbai-rerank-base-v2": 51.8,
+    "ncbi/MedCPT-Cross-Encoder": 130.2,
 }
+RATES_SOURCE = "bench/measured-reranker-rates.json (distinct documents, batch 32)"
 # Observed average pool size is below the window because some first stages
 # return short lists (Pyserini especially). Factor from the smoke pools.
 AVG_POOL_FRACTION = 0.85
@@ -69,6 +74,7 @@ def main() -> int:
         total_seconds += seconds
         print(f"  {model:<46} {seconds/3600:6.2f} h  ({rate:,.0f} pairs/s)")
     print(f"  {'TOTAL (sequential)':<46} {total_seconds/3600:6.2f} h")
+    print(f"  rates from {RATES_SOURCE}")
 
     # Pools phase: retrieval over 4 corpora x stage variants x windows. Document
     # counts are the dominant term; measured earlier at roughly 3-6 min per

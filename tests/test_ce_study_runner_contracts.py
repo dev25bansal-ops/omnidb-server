@@ -4,12 +4,15 @@ No model weights or retrieval runs are touched; only the pure helpers that the
 expensive harness depends on are tested.
 """
 from pathlib import Path
+import json
+import os
+import subprocess
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bench"))
 
 import pytest
-from ce_study_runner import (K, oracle_ndcg, qrels_metrics, read_jsonl,
-                             rank_rrf)
+from ce_study_runner import (K, acquire_run_lock, oracle_ndcg, qrels_metrics,
+                             read_jsonl, read_scores, rank_rrf, release_run_lock)
 
 
 def test_metrics_handle_unjudged_documents_and_oracle(tmp_path):
@@ -39,3 +42,70 @@ def test_jsonl_recovers_truncated_final_fragment(tmp_path):
     assert rows == [{"a": 1}, {"b": 2}]
     # After recovery, only the final partial line is removed.
     assert p.read_text(encoding="utf-8") == '{"a":1}\n{"b":2}\n'
+
+
+KEY = ("corpus", "stage_embedder", "stage", "window", "qid", "reranker")
+
+
+def _score(corpus="nfcorpus", qid="1", reranker="ce", ndcg=0.5, scores=(0.1, 0.2)):
+    return {"corpus": corpus, "stage_embedder": "minilm", "stage": "hybrid",
+            "window": 50, "qid": qid, "reranker": reranker,
+            "ce_ndcg10": ndcg, "ce_scores": list(scores)}
+
+
+def test_read_scores_collapses_duplicate_keys_to_the_first_record(tmp_path):
+    """A second writer must not double-weight a query in the dev tuning mean."""
+    p = tmp_path / "s.jsonl"
+    rows = [_score(qid="1", ndcg=0.5), _score(qid="2", ndcg=0.7),
+            # The re-scored copy of qid 1, differing only in float noise.
+            _score(qid="1", ndcg=0.5, scores=(0.1000001, 0.2))]
+    p.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+    assert len(list(read_jsonl(p))) == 3, "raw stream still shows every record"
+    kept = list(read_scores(p, KEY))
+    assert len(kept) == 2, "duplicate key must collapse to one row"
+    assert [r["qid"] for r in kept] == ["1", "2"]
+    assert kept[0]["ce_scores"] == [0.1, 0.2], "first copy wins"
+
+
+def test_read_scores_keys_on_reranker_so_distinct_models_are_kept(tmp_path):
+    p = tmp_path / "s.jsonl"
+    rows = [_score(reranker="a"), _score(reranker="b"), _score(reranker="a")]
+    p.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+    assert len(list(read_scores(p, KEY))) == 2
+
+
+def test_read_scores_is_a_noop_when_the_file_is_absent(tmp_path):
+    assert list(read_scores(tmp_path / "missing.jsonl", KEY)) == []
+
+
+def test_acquire_run_lock_refuses_a_live_writer_and_reclaims_a_stale_one(tmp_path):
+    # A second *process* is the hazard this guards, so use a real one. Re-acquiring
+    # from this process is deliberately allowed: a process cannot race itself.
+    other = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        lock = acquire_run_lock(tmp_path)
+        assert lock.exists()
+        assert json.loads(lock.read_text(encoding="utf-8"))["pid"] == os.getpid()
+        lock.write_text(json.dumps({"pid": other.pid}), encoding="utf-8")
+        with pytest.raises(RuntimeError, match="already has a live writer"):
+            acquire_run_lock(tmp_path)
+    finally:
+        other.terminate()
+        other.wait(timeout=10)
+
+    # Once its writer is gone the lock is stale, not a refusal.
+    assert acquire_run_lock(tmp_path).exists()
+    release_run_lock(tmp_path / "runner.lock")
+    assert not (tmp_path / "runner.lock").exists()
+
+    # A lock naming an impossible pid, or one that cannot be parsed, must not
+    # brick the run either.
+    for junk in ({"pid": 0}, {"pid": 999999999}, {"nope": 1}, "not json{"):
+        (tmp_path / "runner.lock").write_text(
+            junk if isinstance(junk, str) else json.dumps(junk), encoding="utf-8")
+        assert acquire_run_lock(tmp_path).exists()
+        release_run_lock(tmp_path / "runner.lock")
+
+
+def test_release_run_lock_is_idempotent(tmp_path):
+    release_run_lock(tmp_path / "never-existed.lock")

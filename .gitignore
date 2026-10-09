@@ -38,3 +38,9 @@ _w3*/
 _verify*/
 _f1_snap/
 .omni-audit/
+
+# CE study run state: the lock names a live PID and the log is a live stream.
+# Both are transient runtime state, not evidence; the run config and score
+# artifacts beside them are the record.
+bench/ce-study-runs/**/runner.lock
+bench/ce-study-runs/**/*.log

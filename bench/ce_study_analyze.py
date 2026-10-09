@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 from scipy import stats
 
-from ce_study_runner import HERE, read_jsonl, apply_frozen_test_blends
+from ce_study_runner import HERE, read_scores, apply_frozen_test_blends
 from ce_study_stats import holm_adjust, paired_bootstrap_ci, sign_flip_mean_test
 
 
@@ -35,7 +35,7 @@ def summarize(run_dir: Path, n_perm=100_000, n_boot=20_000):
         raise ValueError("frozen choices are not marked dev-selected")
     test_path=run_dir/"test-results.jsonl"
     if not test_path.exists(): apply_frozen_test_blends(run_dir)
-    rows=list(read_jsonl(test_path))
+    rows=list(read_scores(test_path))
     grouped=defaultdict(list)
     for r in rows:
         key=(r["corpus"],r["stage_embedder"],r["stage"],r["reranker"],int(r["window"]))

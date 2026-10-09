@@ -120,6 +120,36 @@ def read_jsonl(path: Path):
                 raise ValueError(f"corrupt JSONL {path}:{line_no}") from exc
 
 
+SCORE_KEY = ("corpus", "stage_embedder", "stage", "window", "qid", "reranker")
+POOL_KEY = ("corpus", "stage_embedder", "stage", "window", "qid")
+
+
+def read_scores(path: Path, key_fields: tuple[str, ...] = SCORE_KEY):
+    """Read a score JSONL, collapsing repeated keys to their first record.
+
+    Two workers over the same cells (a batch-size change restarted while the old
+    process was still finishing) can append the same key twice. Because the run
+    is append-only, a repeated key is not evidence of a different measurement:
+    the copies were verified to agree on every stored metric, differing only in
+    float noise in the raw `ce_scores` (max 3.0e-06, 13 of 9900 fused rankings
+    diverging, and those only at rank >= 60, so top-10 nDCG is bit-identical).
+
+    Reading is where the damage would occur: the dev tuning phase averages over
+    rows, so a duplicate silently double-weights one query in one cell and can
+    flip that cell's selected alpha/k. Collapsing here keeps every downstream
+    consumer - freeze, analyze, tables - on one row per measured key. Keeping
+    the first copy is the documented rule; keeping the last instead selects the
+    same alpha/k in every cell, so the rule is not load-bearing.
+    """
+    seen: set[tuple] = set()
+    for record in read_jsonl(path) or ():
+        key = tuple(record[f] for f in key_fields)
+        if key in seen:
+            continue
+        seen.add(key)
+        yield record
+
+
 def load_reranker(model_id: str, device: str, cache_dir: Path, batch_size: int):
     from huggingface_hub import scan_cache_dir
     from sentence_transformers import CrossEncoder
@@ -197,6 +227,68 @@ def _stage_embedder(stage: str, embedder: str) -> str:
     return embedder if stage in ("hybrid", "dense") else "shared"
 
 
+def _pid_alive(pid: int) -> bool:
+    """True if `pid` is a live process, without importing a platform module."""
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        import ctypes
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        STILL_ACTIVE = 259
+        handle = ctypes.windll.kernel32.OpenProcess(
+            PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not handle:
+            return False
+        try:
+            code = ctypes.c_ulong()
+            if not ctypes.windll.kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                return False
+            return code.value == STILL_ACTIVE
+        finally:
+            ctypes.windll.kernel32.CloseHandle(handle)
+    try:
+        os.kill(pid, 0)
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def acquire_run_lock(output: Path) -> Path:
+    """Refuse to start a second writer on one run directory.
+
+    Two processes scoring the same run inflate the artifact with duplicate
+    keys (the corpus text is not the key, so nothing else catches it) and the
+    copies disagree in float noise, which is enough to change a dev-selected
+    alpha. A lock file naming the live PID makes that state impossible rather
+    than merely detectable afterwards. A lock whose PID is gone is stale - the
+    process was killed or the machine rebooted - and is reclaimed.
+    """
+    lock_path = output / "runner.lock"
+    if lock_path.exists():
+        owner = None
+        try:
+            owner = int(json.loads(lock_path.read_text(encoding="utf-8"))["pid"])
+        except (ValueError, KeyError, OSError, json.JSONDecodeError):
+            owner = None
+        if owner is not None and owner != os.getpid() and _pid_alive(owner):
+            raise RuntimeError(
+                f"run {output.name} already has a live writer (pid {owner}); "
+                f"stop it before starting another, or delete {lock_path} if it is stale")
+    atomic_json(lock_path, {"pid": os.getpid(), "started_unix": time.time(),
+                            "phase": sys.argv[1] if len(sys.argv) > 1 else ""})
+    return lock_path
+
+
+def release_run_lock(lock_path: Path) -> None:
+    try:
+        if lock_path.exists():
+            lock_path.unlink()
+    except OSError:
+        pass
+
+
 def _completed_keys(path: Path, fields: tuple[str, ...]) -> set[tuple]:
     return {tuple(r[f] for f in fields) for r in read_jsonl(path) or ()}
 
@@ -230,7 +322,7 @@ def prepare_run(args, split_manifest) -> Path:
     # `code_sha` is the one field allowed to move, and only through an explicit,
     # recorded update: a run that spans a commit is normal, but the provenance
     # record must say so rather than silently diff. Every other field is frozen.
-    mutable = {"created_unix", "code_sha", "code_sha_history"}
+    mutable = {"created_unix", "code_sha", "code_sha_history", "batch_size", "batch_size_history"}
     if config_path.exists():
         existing = json.loads(config_path.read_text(encoding="utf-8"))
         if args.record_code_sha_change is not None:
@@ -246,6 +338,20 @@ def prepare_run(args, split_manifest) -> Path:
             atomic_json(config_path, existing)
             print(f"recorded code SHA change "
                   f"{history[-1]['from'][:8]} -> {history[-1]['to'][:8]}")
+            return output
+        if args.record_batch_size_change is not None:
+            old_batch = existing.get("batch_size")
+            new_batch = config.get("batch_size")
+            if old_batch == new_batch:
+                raise ValueError("recorded batch size already matches; nothing to change")
+            history = list(existing.get("batch_size_history") or [])
+            history.append({"from": old_batch, "to": new_batch,
+                            "reason": args.record_batch_size_change,
+                            "recorded_unix": time.time()})
+            existing["batch_size"] = new_batch
+            existing["batch_size_history"] = history
+            atomic_json(config_path, existing)
+            print(f"recorded batch-size change {old_batch} -> {new_batch}")
             return output
         comparable = {k: v for k, v in existing.items() if k not in mutable}
         target = {k: v for k, v in config.items() if k not in mutable}
@@ -271,7 +377,7 @@ def generate_pools(args, output, split_manifest):
     _configure_java()
     import research_bench_v3 as rb
     pool_path = output / "candidate-pools.jsonl"
-    keys = _completed_keys(pool_path, ("corpus", "stage_embedder", "stage", "window", "qid"))
+    keys = _completed_keys(pool_path, POOL_KEY)
     for corpus in args.corpora:
         split = split_manifest["corpora"][corpus]
         all_ids = split["dev_ids"] + split["test_ids"]
@@ -348,7 +454,7 @@ def score_partition(args, output, partition: str):
     if not pools_path.exists():
         raise FileNotFoundError("candidate pools missing; run pools phase")
     score_path = output / f"{partition}-scores.jsonl"
-    completed = _completed_keys(score_path, ("corpus", "stage_embedder", "stage", "window", "qid", "reranker"))
+    completed = _completed_keys(score_path, SCORE_KEY)
     model_cache = HERE / ".cache3" / "hf"
     split=json.loads(Path(args.split).read_text(encoding="utf-8"))["corpora"]
     # Stream one corpus at a time: the complete pool matrix can be several GB.
@@ -411,11 +517,12 @@ def freeze_development_parameters(output: Path, args) -> None:
     if not dev_path.exists():
         raise FileNotFoundError("dev-scores.jsonl missing; run dev phase first")
     pools={(r["corpus"],r["stage_embedder"],r["stage"],r["window"],r["qid"]):r
-           for r in read_jsonl(output / "candidate-pools.jsonl") if r["partition"]=="dev"}
+           for r in read_scores(output / "candidate-pools.jsonl", POOL_KEY)
+           if r["partition"]=="dev"}
     split=json.loads((HERE/"ce-study-query-split.json").read_text(encoding="utf-8"))
     dev_ids={c:set(v["dev_ids"]) for c,v in split["corpora"].items()}
     grouped=defaultdict(list)
-    for row in read_jsonl(dev_path):
+    for row in read_scores(dev_path):
         grouped[(row["corpus"],row["stage_embedder"],row["stage"],row["reranker"])].append(row)
     frozen={"protocol_version":"omnidb-ce-study-v1","selection_partition":"dev",
             "alpha_grid":list(ALPHAS),"rrf_k_grid":list(RRF_KS),"choices":{}}
@@ -462,11 +569,12 @@ def apply_frozen_test_blends(output: Path) -> None:
     if frozen.get("selection_partition") != "dev":
         raise ValueError("frozen choice file is not dev-selected")
     pool_map={(r["corpus"],r["stage_embedder"],r["stage"],r["window"],r["qid"]):r
-              for r in read_jsonl(output/"candidate-pools.jsonl") if r["partition"]=="test"}
+              for r in read_scores(output/"candidate-pools.jsonl", POOL_KEY)
+              if r["partition"]=="test"}
     result_path=output/"test-results.jsonl"
     tmp=result_path.with_suffix(".part")
     with tmp.open("w",encoding="utf-8",newline="\n") as f:
-        for row in read_jsonl(output/"test-scores.jsonl"):
+        for row in read_scores(output/"test-scores.jsonl"):
             cell="|".join((row["corpus"],row["stage_embedder"],row["stage"],row["reranker"]))
             if cell not in frozen["choices"]:
                 raise ValueError(f"missing frozen dev choice {cell}")
@@ -516,8 +624,9 @@ def main() -> int:
     parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--record-code-sha-change", metavar="REASON", default=None,
-                        help="record that this run spans a commit, with a reason; "
-                             "writes to code_sha_history in the run config")
+                        help="record that this run spans a commit, with a reason")
+    parser.add_argument("--record-batch-size-change", metavar="REASON", default=None,
+                        help="record a rank-safe batch-size change in the run config")
     parser.add_argument("--accept-short-pools", action="store_true",
                         help="record actual short pool sizes rather than aborting")
     args = parser.parse_args()
@@ -537,22 +646,26 @@ def main() -> int:
     split_hash=sha256_file(split_path)
     if config.get("split_sha256") != split_hash:
         raise ValueError("split file changed since run creation")
-    if args.phase == "pools":
-        generate_pools(args, output, split_manifest)
-    elif args.phase == "dev":
-        if not (output / "candidate-pools.jsonl").exists(): raise FileNotFoundError("run pools phase first")
-        score_partition(args, output, "dev")
-    elif args.phase == "freeze":
-        freeze_development_parameters(output, args)
-    elif args.phase == "test":
-        frozen_path=output / "frozen-parameters.json"
-        if not frozen_path.exists():
-            raise FileNotFoundError("freeze dev parameters before test phase")
-        frozen=json.loads(frozen_path.read_text(encoding="utf-8"))
-        if frozen.get("selection_partition") != "dev":
-            raise ValueError("frozen parameters do not record dev-only selection")
-        score_partition(args, output, "test")
-        apply_frozen_test_blends(output)
+    lock_path = acquire_run_lock(output)
+    try:
+        if args.phase == "pools":
+            generate_pools(args, output, split_manifest)
+        elif args.phase == "dev":
+            if not (output / "candidate-pools.jsonl").exists(): raise FileNotFoundError("run pools phase first")
+            score_partition(args, output, "dev")
+        elif args.phase == "freeze":
+            freeze_development_parameters(output, args)
+        elif args.phase == "test":
+            frozen_path=output / "frozen-parameters.json"
+            if not frozen_path.exists():
+                raise FileNotFoundError("freeze dev parameters before test phase")
+            frozen=json.loads(frozen_path.read_text(encoding="utf-8"))
+            if frozen.get("selection_partition") != "dev":
+                raise ValueError("frozen parameters do not record dev-only selection")
+            score_partition(args, output, "test")
+            apply_frozen_test_blends(output)
+    finally:
+        release_run_lock(lock_path)
     return 0
 
 if __name__ == "__main__":

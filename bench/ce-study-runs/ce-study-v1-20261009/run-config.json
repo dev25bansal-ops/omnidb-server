@@ -1,12 +1,26 @@
 {
-  "batch_size": 4,
-  "code_sha": "6939b184501a759bb450fb1ac58cc222b2dc8cbf",
+  "batch_size": 32,
+  "batch_size_history": [
+    {
+      "from": 4,
+      "reason": "real-pool rank check: batch 4 vs 32 produced 0 CE or fused ranking differences across 40 scidocs/hybrid/bge-base/w100 pools; reduces wall time without changing nDCG",
+      "recorded_unix": 1791544857.0941114,
+      "to": 32
+    }
+  ],
+  "code_sha": "6536e130cc52777a6728fcacc6f7d1ebd74d97d8",
   "code_sha_history": [
     {
       "from": "36d848b059ce3d836fb4d2da7696796e6ea0bae9",
       "reason": "post-pools commit added only condensed_ndcg to the scoring path (+10 lines); retrieval code byte-identical at 36d848b, verified by git diff",
       "recorded_unix": 1791520762.5398638,
       "to": "6939b184501a759bb450fb1ac58cc222b2dc8cbf"
+    },
+    {
+      "from": "6939b184501a759bb450fb1ac58cc222b2dc8cbf",
+      "reason": "fresh-home retrieval fix (6536e13): pools regenerate byte-identically (0/323 nfcorpus queries differ), so the collected pools remain valid",
+      "recorded_unix": 1791521868.5730898,
+      "to": "6536e130cc52777a6728fcacc6f7d1ebd74d97d8"
     }
   ],
   "corpora": [
