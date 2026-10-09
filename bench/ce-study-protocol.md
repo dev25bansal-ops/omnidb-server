@@ -14,7 +14,7 @@ Five pinned rerankers: existing `cross-encoder/ms-marco-MiniLM-L-6-v2` and `BAAI
 
 - First stages: OmniDB hybrid, exact dense-only, OmniDB FTS5 sparse-only, bm25s, and Pyserini. Hybrid and dense-only have four encoder configurations; sparse-only, bm25s, and Pyserini are embedder-independent. Windows: 25, 50, 100; evaluation cutoff K=10.
 - Qdrant `:memory:` is exact local brute-force in the installed `qdrant-client`; it is retained only as an independent exact-dense validation, not treated as an independent ANN first stage or duplicated in the confirmatory family. No ANN claim is made unless a separate HNSW run is actually conducted.
-- Fixed-pool candidates, raw per-pair CE scores, query IDs, qrels, tokenizer max length, truncation, revisions, and ranking outputs are saved. Hybrid rankings are freshly retrieved at each `k_fetch=w`; exact dense and single-leg lists may use top-100 prefixes only after equality with independent w-specific retrieval is verified.
+- Fixed-pool candidates, raw per-pair CE scores, query IDs, qrels, tokenizer max length, truncation, revisions, and ranking outputs are saved. Every stage is retrieved fresh at each window width; no stage's w-window list is produced by slicing a wider retrieval. `bench/verify_prefix_slicing.py` tested that shortcut on nfcorpus and it is NOT sound for the lexical stages: `recall()` passes the fetch width into the FTS `LIMIT`, so `bm25()` scores only the admitted rows and top-100[:25] differs from a direct top-25 on 2 of 3 windows (bm25s likewise; dense and Pyserini are prefix-stable, but all stages use the same fresh-retrieval path so the rule has no exceptions to remember).
 
 ## Selection and estimands
 

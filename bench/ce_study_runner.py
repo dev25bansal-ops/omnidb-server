@@ -254,6 +254,8 @@ def generate_pools(args, output, split_manifest):
                 home = output / "work" / corpus / stage_emb / stage
                 rankings = {}
                 if stage == "hybrid":
+                    # The fused top-w depends on the fetch width, so every window
+                    # is an independent retrieval pass (protocol requirement).
                     for w in args.windows:
                         rankings[w], _ = rb.retrieve_omnidb(
                             docs, queries, vecs, qvecs, home / f"w{w}", fetch=w, limit=w)
@@ -262,10 +264,18 @@ def generate_pools(args, output, split_manifest):
                         rankings[w] = rb.retrieve_omnidb_dense_only(
                             docs, queries, vecs, qvecs, home / f"w{w}", limit=w)
                 elif stage == "fts5_sparse":
+                    # NOT a prefix of a larger fetch: recall() passes the fetch
+                    # width into the FTS LIMIT, so bm25() only scores the rows
+                    # that LIMIT admits and the w-window ranking is genuinely
+                    # different from a sliced top-max (verified on nfcorpus:
+                    # top-100[:25] != direct top-25 for 2 of 3 windows).
                     for w in args.windows:
                         rankings[w] = rb.retrieve_omnidb_sparse_only(
                             docs, queries, vecs, qvecs, home / f"w{w}", limit=w)
                 elif stage == "bm25s":
+                    # Same property: bm25s.retrieve(k=w) selects a different
+                    # candidate set than slicing, because scoring/selection are
+                    # coupled at the requested k.
                     for w in args.windows:
                         rankings[w] = rb.retrieve_bm25s(
                             docs, queries, None, None, home / f"w{w}", k=w)

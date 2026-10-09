@@ -1,16 +1,22 @@
 {
   "batch_size": 4,
-  "code_sha": "1a39a7631a944b74fbde2f38b2de5301ec820f1f",
+  "code_sha": "36d848b059ce3d836fb4d2da7696796e6ea0bae9",
   "corpora": [
-    "nfcorpus"
+    "nfcorpus",
+    "scifact",
+    "scidocs",
+    "fiqa"
   ],
-  "created_unix": 1791485309.7195532,
+  "created_unix": 1791516092.0094678,
   "data_manifest_sha256": "c6cc5618598842841ecd32ca740efc28521894a0833ee47c96c9dba5d6695a8e",
   "device": "cuda",
   "embedders": [
-    "minilm"
+    "minilm",
+    "bge-small",
+    "e5-small",
+    "bge-base"
   ],
-  "protocol_sha256": "0c6e4bb7a293482907b077a9629628c91087203308ba7281551e81837c457599",
+  "protocol_sha256": "f9abde027b1f4edfe33a61d67db83223f3e2d7961259ff64e4aa1c10bb0cede7",
   "protocol_version": "omnidb-ce-study-v1",
   "rerankers": {
     "BAAI/bge-reranker-base": "2cfc18c9415c912f9d8155881c133215df768a70",
@@ -19,13 +25,18 @@
     "mixedbread-ai/mxbai-rerank-base-v2": "3ea9d4dffa7d12a4f366be8e275c349de9fc9865",
     "ncbi/MedCPT-Cross-Encoder": "71caf65d4927987813984f54c284405a13fcca49"
   },
-  "run_id": "smoke-20261009",
+  "run_id": "ce-study-v1-20261009",
   "split_sha256": "ac8981bb9ba539cd52edc657bf139a5d1fb84aabe4a94ac8d860c08298399bfb",
   "stages": [
-    "hybrid"
+    "hybrid",
+    "dense",
+    "fts5_sparse",
+    "bm25s",
+    "pyserini"
   ],
   "windows": [
     25,
-    50
+    50,
+    100
   ]
 }

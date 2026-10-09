@@ -1,0 +1,33 @@
+pools nfcorpus/minilm/hybrid: added 969
+pools nfcorpus/bge-small/hybrid: added 969
+pools nfcorpus/e5-small/hybrid: added 969
+pools nfcorpus/bge-base/hybrid: added 969
+pools nfcorpus/minilm/dense: added 969
+pools nfcorpus/bge-small/dense: added 969
+pools nfcorpus/e5-small/dense: added 969
+pools nfcorpus/bge-base/dense: added 969
+pools nfcorpus/minilm/fts5_sparse: added 969
+Split strings:   0%|          | 0/3633 [00:00<?, ?it/s]Split strings:  45%|####5     | 1643/3633 [00:00<00:00, 16419.21it/s]Split strings:  90%|######### | 3285/3633 [00:00<00:00, 16375.60it/s]                                                                     BM25S Count Tokens:   0%|          | 0/3633 [00:00<?, ?it/s]                                                            BM25S Compute Scores:   0%|          | 0/3633 [00:00<?, ?it/s]                                                              Split strings:   0%|          | 0/323 [00:00<?, ?it/s]                                                      BM25S Retrieve:   0%|          | 0/323 [00:00<?, ?it/s]                                                       Split strings:   0%|          | 0/3633 [00:00<?, ?it/s]Split strings:  45%|####5     | 1646/3633 [00:00<00:00, 16451.78it/s]Split strings:  91%|######### | 3292/3633 [00:00<00:00, 16261.60it/s]                                                                     BM25S Count Tokens:   0%|          | 0/3633 [00:00<?, ?it/s]                                                            BM25S Compute Scores:   0%|          | 0/3633 [00:00<?, ?it/s]                                                              Split strings:   0%|          | 0/323 [00:00<?, ?it/s]                                                      BM25S Retrieve:   0%|          | 0/323 [00:00<?, ?it/s]                                                       Split strings:   0%|          | 0/3633 [00:00<?, ?it/s]Split strings:  45%|####4     | 1630/3633 [00:00<00:00, 16291.12it/s]Split strings:  90%|########9 | 3268/3633 [00:00<00:00, 16339.23it/s]                                                                     BM25S Count Tokens:   0%|          | 0/3633 [00:00<?, ?it/s]                                                            BM25S Compute Scores:   0%|          | 0/3633 [00:00<?, ?it/s]                                                              Split strings:   0%|          | 0/323 [00:00<?, ?it/s]                                                      BM25S Retrieve:   0%|          | 0/323 [00:00<?, ?it/s]                                                       pools nfcorpus/minilm/bm25s: added 969
+C:\Users\dev25\AppData\Roaming\Python\Python314\site-packages\torch\cuda\__init__.py:64: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+2026-10-09 08:53:49,133 INFO  [main] index.SimpleIndexer (SimpleIndexer.java:138) - Using DefaultEnglishAnalyzer
+2026-10-09 08:53:49,136 INFO  [main] index.SimpleIndexer (SimpleIndexer.java:139) - Stemmer: porter
+2026-10-09 08:53:49,138 INFO  [main] index.SimpleIndexer (SimpleIndexer.java:140) - Keep stopwords? false
+2026-10-09 08:53:49,138 INFO  [main] index.SimpleIndexer (SimpleIndexer.java:141) - Stopwords file: null
+2026-10-09 08:53:51,884 INFO  [main] index.SimpleIndexer (SimpleIndexer.java:138) - Using DefaultEnglishAnalyzer
+2026-10-09 08:53:51,884 INFO  [main] index.SimpleIndexer (SimpleIndexer.java:139) - Stemmer: porter
+2026-10-09 08:53:51,884 INFO  [main] index.SimpleIndexer (SimpleIndexer.java:140) - Keep stopwords? false
+2026-10-09 08:53:51,884 INFO  [main] index.SimpleIndexer (SimpleIndexer.java:141) - Stopwords file: null
+2026-10-09 08:53:54,099 INFO  [main] index.SimpleIndexer (SimpleIndexer.java:138) - Using DefaultEnglishAnalyzer
+2026-10-09 08:53:54,100 INFO  [main] index.SimpleIndexer (SimpleIndexer.java:139) - Stemmer: porter
+2026-10-09 08:53:54,100 INFO  [main] index.SimpleIndexer (SimpleIndexer.java:140) - Keep stopwords? false
+2026-10-09 08:53:54,100 INFO  [main] index.SimpleIndexer (SimpleIndexer.java:141) - Stopwords file: null
+pools nfcorpus/minilm/pyserini: added 969
+pools scifact/minilm/hybrid: added 900
+pools scifact/bge-small/hybrid: added 900
+pools scifact/e5-small/hybrid: added 900
+pools scifact/bge-base/hybrid: added 900
+pools scifact/minilm/dense: added 900
+pools scifact/bge-small/dense: added 900
+pools scifact/e5-small/dense: added 900
+pools scifact/bge-base/dense: added 900

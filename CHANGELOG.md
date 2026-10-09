@@ -7,6 +7,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — held-out CE second-stage study (reviewer round 10)
+A query-disjoint, drug-development-style held-out evaluation of whether a
+cross-encoder second stage helps, separating "the CE is weak" from "the CE
+signals are unusable".
+
+- **Split, frozen before any model saw a query** (`ce_study_split.py`,
+  `ce-study-query-split.json`): query IDs sorted by SHA-256 of
+  `protocol|corpus|qid`, first 40% development and the rest test. nfcorpus
+  129/194, scifact 120/180, scidocs 400/600, fiqa 259/389. ID lists and their
+  SHA-256 are recorded; validation rejects overlap, duplicates, missing or
+  extra IDs, and any hand-edit.
+- **Resumable four-phase runner** (`ce_study_runner.py`): `pools` -> `dev` ->
+  `freeze` -> `test`. Pools read corpus and query text but never qrels; the dev
+  and test scorers load only their own partition's qrels rows; the test phase
+  refuses to run until `frozen-parameters.json` exists, and that file is
+  written from development outcomes only. Run config is immutable and carries
+  the split hash, protocol hash, data-manifest hash and code SHA; resume
+  refuses any mismatch. JSONL checkpoints recover a torn final record.
+- **Locked inference helpers** (`ce_study_stats.py`): sign-flip permutation on
+  the paired mean with exact zeros retained, paired percentile bootstrap, Holm
+  over a fixed family, and a clustered bootstrap that resamples query IDs once
+  across cells so repeated cells are not treated as independent observations.
+- **Fixed confirmatory family** (`ce_study_analyze.py`): 5 rerankers x 11
+  first-stage variants x 3 windows x 4 corpora = 660 contrasts, enumerated
+  from the run config before outcomes are read. Missing cells stay missing and
+  enter Holm as p=1 placeholders, so the denominator cannot shrink after
+  seeing results.
+- **Five pinned rerankers**: MiniLM-L6, bge-reranker-base, bge-reranker-large,
+  mxbai-rerank-base-v2, MedCPT-Cross-Encoder, each at an exact revision SHA.
+- **Model-correctness gate** (`verify_rerankers.py`): every pinned model must
+  rank a relevant passage above an irrelevant one before any matrix runs. It
+  caught two real defects, both of which a "loads successfully" check passes:
+  mxbai-rerank-base-v2 needs sentence-transformers >= 5.4 for its `LogitScore`
+  module (on 5.2.3 the score head was silently initialized from scratch and
+  the model scored an irrelevant passage *higher*), and its pair inputs need
+  the repository's chat template. sentence-transformers pinned to 5.7.0.
+- **Prefix-slicing check** (`verify_prefix_slicing.py`): tests whether a wider
+  retrieval can be sliced per window instead of re-retrieved. It cannot for the
+  lexical stages -- `recall()` passes the fetch width into the FTS `LIMIT`, so
+  `bm25()` scores only the admitted rows and top-100[:25] differs from a direct
+  top-25 on 2 of 3 windows. Every stage therefore retrieves fresh per window.
+- **Supporting harness repairs** in `research_bench_v3.py`: stale tenant
+  sidecars are cleared *before* `build_stack` (a resumed run's leftover 384-d
+  sidecar otherwise raises `index dim 384 != configured dim 512` at
+  construction) and the tenant backend cache is dropped before corpus vectors
+  are installed; all stage retrievers take an explicit `fetch`/`limit`;
+  `load_beir_documents_and_queries` loads query text without qrels.
+- **Cost measured before committing**: `bench_reranker_throughput.py` on the
+  RTX 5060 Laptop GPU at batch 32 gives 3252 / 514 / 157 / 163 / 688 pairs/s
+  for L6 / bge-base / bge-large / mxbai / MedCPT; `ce_study_estimate.py`
+  projects 660 contrasts, ~3.7M pair-scores per reranker, ~16.7 h of GPU
+  scoring, plus the retrieval phase.
+- 16 new contract tests (`tests/test_ce_study_*.py`) pin the split, the
+  inference helpers, the fusion metric, and JSONL recovery.
+
 ### Fixed — independent claim audit (17 findings across 412 claims)
 An adversarial provenance pass over both manuscripts found 17 failures; this
 records the code-side repairs. The paper-side ones are in the round-9 notes
