@@ -1,1 +1,18 @@
 research-v3-results.*.json
+
+# CE study run scratch (see bench/.gitignore.ce-study for rationale)
+ce-study-runs/*/work/
+ce-study-runs/*/*.db
+ce-study-runs/*/*.db-wal
+ce-study-runs/*/*.db-shm
+ce-study-runs/*/.lock
+ce-study-runs/*/*.npz
+ce-study-runs/*/*.hnsw
+ce-study-runs/*/*.bin
+ce-study-runs/*/pyserini-*
+ce-study-runs/*/qd/
+ce-study-runs/*/tenant-*
+ce-study-runs/*/index-*
+ce-study-runs/*/*.faiss
+ce-study-runs/*/omnidb.toml
+ce-study-runs/*/vectors.npz

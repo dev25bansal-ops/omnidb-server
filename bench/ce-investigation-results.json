@@ -1,0 +1,275 @@
+{
+  "metadata": {
+    "model": "cross-encoder/ms-marco-MiniLM-L-6-v2",
+    "revision": "233902d25c440f23af6f7d6e94d2946bac0bee0a",
+    "description": "Investigation of CE score interpolation, dense-only first stage, unjudged documents, and permutation tests"
+  },
+  "dense_only_plus_ce": {
+    "nfcorpus": {
+      "dense_ndcg10": 0.3182,
+      "ce_ndcg10": 0.3393,
+      "delta": 0.0211,
+      "p_raw": 0.023367941857243637
+    },
+    "scifact": {
+      "dense_ndcg10": 0.6484,
+      "ce_ndcg10": 0.6875,
+      "delta": 0.0391,
+      "p_raw": 0.025468528456090492
+    },
+    "scidocs": {
+      "dense_ndcg10": 0.217,
+      "ce_ndcg10": 0.1872,
+      "delta": -0.0298,
+      "p_raw": 1.3993005676291248e-09
+    },
+    "fiqa": {
+      "dense_ndcg10": 0.3637,
+      "ce_ndcg10": 0.3881,
+      "delta": 0.0244,
+      "p_raw": 0.031119518513706007
+    }
+  },
+  "rank_interpolation": {
+    "nfcorpus": {
+      "0.0": {
+        "ndcg10": 0.3429,
+        "delta": 0.0004
+      },
+      "0.2": {
+        "ndcg10": 0.3441,
+        "delta": 0.0015
+      },
+      "0.4": {
+        "ndcg10": 0.3468,
+        "delta": 0.0043
+      },
+      "0.5": {
+        "ndcg10": 0.3449,
+        "delta": 0.0024
+      },
+      "0.6": {
+        "ndcg10": 0.3442,
+        "delta": 0.0017
+      },
+      "0.8": {
+        "ndcg10": 0.3416,
+        "delta": -0.0009
+      },
+      "1.0": {
+        "ndcg10": 0.3396,
+        "delta": -0.003
+      }
+    },
+    "scifact": {
+      "0.0": {
+        "ndcg10": 0.7047,
+        "delta": -0.0005
+      },
+      "0.2": {
+        "ndcg10": 0.7051,
+        "delta": -0.0001
+      },
+      "0.4": {
+        "ndcg10": 0.7057,
+        "delta": 0.0004
+      },
+      "0.5": {
+        "ndcg10": 0.7065,
+        "delta": 0.0013
+      },
+      "0.6": {
+        "ndcg10": 0.7094,
+        "delta": 0.0042
+      },
+      "0.8": {
+        "ndcg10": 0.7044,
+        "delta": -0.0008
+      },
+      "1.0": {
+        "ndcg10": 0.6875,
+        "delta": -0.0177
+      }
+    },
+    "scidocs": {
+      "0.0": {
+        "ndcg10": 0.2068,
+        "delta": -0.0001
+      },
+      "0.2": {
+        "ndcg10": 0.2065,
+        "delta": -0.0004
+      },
+      "0.4": {
+        "ndcg10": 0.2024,
+        "delta": -0.0045
+      },
+      "0.5": {
+        "ndcg10": 0.2015,
+        "delta": -0.0054
+      },
+      "0.6": {
+        "ndcg10": 0.1981,
+        "delta": -0.0088
+      },
+      "0.8": {
+        "ndcg10": 0.1931,
+        "delta": -0.0138
+      },
+      "1.0": {
+        "ndcg10": 0.1872,
+        "delta": -0.0197
+      }
+    },
+    "fiqa": {
+      "0.0": {
+        "ndcg10": 0.3742,
+        "delta": -0.0054
+      },
+      "0.2": {
+        "ndcg10": 0.3846,
+        "delta": 0.005
+      },
+      "0.4": {
+        "ndcg10": 0.3938,
+        "delta": 0.0142
+      },
+      "0.5": {
+        "ndcg10": 0.3943,
+        "delta": 0.0147
+      },
+      "0.6": {
+        "ndcg10": 0.3926,
+        "delta": 0.013
+      },
+      "0.8": {
+        "ndcg10": 0.391,
+        "delta": 0.0114
+      },
+      "1.0": {
+        "ndcg10": 0.3881,
+        "delta": 0.0085
+      }
+    }
+  },
+  "unjudged_robustness": {
+    "nfcorpus": {
+      "hybrid_judged10_pct": 25.2,
+      "ce_judged10_pct": 24.49,
+      "condensed_hybrid_ndcg10": 0.5475,
+      "condensed_ce_ndcg10": 0.548,
+      "condensed_delta": 0.0005
+    },
+    "scifact": {
+      "hybrid_judged10_pct": 9.5,
+      "ce_judged10_pct": 9.1,
+      "condensed_hybrid_ndcg10": 0.8911,
+      "condensed_ce_ndcg10": 0.8911,
+      "condensed_delta": 0.0
+    },
+    "scidocs": {
+      "hybrid_judged10_pct": 10.82,
+      "ce_judged10_pct": 10.01,
+      "condensed_hybrid_ndcg10": 0.5202,
+      "condensed_ce_ndcg10": 0.5201,
+      "condensed_delta": -0.0001
+    },
+    "fiqa": {
+      "hybrid_judged10_pct": 10.56,
+      "ce_judged10_pct": 10.79,
+      "condensed_hybrid_ndcg10": 0.6771,
+      "condensed_ce_ndcg10": 0.6771,
+      "condensed_delta": 0.0
+    }
+  },
+  "table2_permutation_tests": {
+    "nfcorpus": {
+      "minilm": {
+        "delta": -0.003,
+        "p_wilcoxon": 0.6045706493946024,
+        "p_permutation": 0.6173
+      },
+      "bge-small": {
+        "delta": -0.0127,
+        "p_wilcoxon": 0.14069254683373097,
+        "p_permutation": 0.0519
+      },
+      "e5-small": {
+        "delta": 0.0025,
+        "p_wilcoxon": 0.6102782462614222,
+        "p_permutation": 0.6328
+      },
+      "bge-base": {
+        "delta": -0.019,
+        "p_wilcoxon": 0.058127149826336204,
+        "p_permutation": 0.0063
+      }
+    },
+    "scifact": {
+      "minilm": {
+        "delta": -0.0177,
+        "p_wilcoxon": 0.19230082636866097,
+        "p_permutation": 0.2151
+      },
+      "bge-small": {
+        "delta": -0.0368,
+        "p_wilcoxon": 0.022662340215525,
+        "p_permutation": 0.0087
+      },
+      "e5-small": {
+        "delta": -0.0357,
+        "p_wilcoxon": 0.015517957024912668,
+        "p_permutation": 0.0107
+      },
+      "bge-base": {
+        "delta": -0.0538,
+        "p_wilcoxon": 0.0003161584915949578,
+        "p_permutation": 0.0001
+      }
+    },
+    "scidocs": {
+      "minilm": {
+        "delta": -0.0197,
+        "p_wilcoxon": 2.91805775382032e-08,
+        "p_permutation": 0.0
+      },
+      "bge-small": {
+        "delta": -0.0184,
+        "p_wilcoxon": 6.019710574307327e-07,
+        "p_permutation": 0.0
+      },
+      "e5-small": {
+        "delta": -0.0055,
+        "p_wilcoxon": 0.14333033813481966,
+        "p_permutation": 0.1027
+      },
+      "bge-base": {
+        "delta": -0.0238,
+        "p_wilcoxon": 1.4477755966564807e-10,
+        "p_permutation": 0.0
+      }
+    },
+    "fiqa": {
+      "minilm": {
+        "delta": 0.0085,
+        "p_wilcoxon": 0.3632013684359203,
+        "p_permutation": 0.2734
+      },
+      "bge-small": {
+        "delta": -0.009,
+        "p_wilcoxon": 0.11497035992692016,
+        "p_permutation": 0.2175
+      },
+      "e5-small": {
+        "delta": 0.0074,
+        "p_wilcoxon": 0.3623671008264593,
+        "p_permutation": 0.3002
+      },
+      "bge-base": {
+        "delta": -0.0099,
+        "p_wilcoxon": 0.03261427196446609,
+        "p_permutation": 0.1809
+      }
+    }
+  }
+}

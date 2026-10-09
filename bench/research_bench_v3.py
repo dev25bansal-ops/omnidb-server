@@ -136,6 +136,29 @@ def _beir_fetch(url: str, cache_name: str) -> bytes:
     return data
 
 
+def load_beir_documents_and_queries(hf_name: str, query_ids) -> tuple[list, list]:
+    """Load corpus texts and only requested query texts, without reading qrels.
+
+    Used by the held-out study pool generator so retrieval/pool creation does
+    not load relevance grades. Query IDs are fixed by the precomputed split.
+    """
+    import pandas as pd
+    base = f"https://huggingface.co/datasets/BeIR/{hf_name}/resolve/main"
+    corpus_df = pd.read_parquet(io.BytesIO(_beir_fetch(
+        f"{base}/corpus/corpus-00000-of-00001.parquet", f"{hf_name}-corpus.parquet")))
+    queries_df = pd.read_parquet(io.BytesIO(_beir_fetch(
+        f"{base}/queries/queries-00000-of-00001.parquet", f"{hf_name}-queries.parquet")))
+    wanted = set(map(str, query_ids))
+    docs = [(str(r["_id"]), f"{r.get('title', '')}. {r.get('text', '')}".strip())
+            for _, r in corpus_df.iterrows()]
+    queries = [(str(r["_id"]), r["text"], {}) for _, r in queries_df.iterrows()
+               if str(r["_id"]) in wanted]
+    found = {q[0] for q in queries}
+    if found != wanted:
+        raise ValueError(f"{hf_name}: query parquet mismatch; missing={len(wanted-found)}")
+    return docs, queries
+
+
 def load_beir(hf_name: str):
     import pandas as pd
 
@@ -272,62 +295,124 @@ def _make_embedder(vecs, qvecs, corpus_texts):
     return _FixedVecEmbedder()
 
 
-def retrieve_omnidb(docs, queries, vecs, qvecs, home: Path):
-    """Returns (ranked_lists, latencies_ms). Hybrid: BM25 + dense w-RRF."""
+def _clear_tenant_sidecars(home: Path) -> None:
+    """Delete the default tenant's persisted index before opening a store.
+
+    Must run BEFORE build_stack: `MemoryStore.__init__` recovers index state
+    from whatever sidecar is on disk, so a leftover 384-d corpus sidecar under a
+    hashing-configured (512-d) store raises "index dim 384 != configured dim 512"
+    during construction. A resumed run that failed partway leaves exactly that.
+    """
+    from omnidb_server.tenancy import DEFAULT_TENANT, index_name
+
+    for suffix in ("npz", "hnsw"):
+        stale = home / index_name(DEFAULT_TENANT, suffix)
+        if stale.exists():
+            stale.unlink()
+
+
+def _install_benchmark_vectors(store, docs, vecs, qvecs, home: Path):
+    """Install corpus vectors behind the tenant router used by production recall().
+
+    `remember_many` has already routed the store's own hashing vectors into the
+    default tenant's backend, and that backend is cached in memory; the disk
+    sidecars are deleted above, but the cached object is not. Both must be
+    dropped, or the corpus vectors are appended onto rows that are about to be
+    discarded (broadcast error: 3633x384 into 7266x384).
+    """
+    from omnidb_server.tenancy import DEFAULT_TENANT
+    from omnidb_server.vector_index import open_vector_index
+
+    shared = _make_embedder(vecs, qvecs, [t for _d, t in docs])
+    ids = [int(r["id"]) for r in store.conn.execute(
+        "SELECT id FROM memories ORDER BY id")]
+    store._mark_dirty()
+    _clear_tenant_sidecars(home)
+    router = store.index
+    if hasattr(router, "_backends"):
+        with router._lock:
+            router._backends.pop(DEFAULT_TENANT, None)
+    router = open_vector_index(home, "brute", shared.dim, len(ids))
+    router.add(ids, vecs, DEFAULT_TENANT)
+    store.index = router
+    store.embedder = shared
+
+
+def retrieve_omnidb(docs, queries, vecs, qvecs, home: Path, *, fetch=None, limit=None):
+    """Hybrid BM25+dense retrieval with explicit candidate fetch and output limit."""
     from omnidb_server.config import Config
     from omnidb_server.server import build_stack
-    from omnidb_server.vector_index import BruteForceIndex
 
+    fetch = RERANK_CANDS if fetch is None else int(fetch)
+    limit = fetch if limit is None else int(limit)
+    if not 1 <= limit <= fetch:
+        raise ValueError("require 1 <= limit <= fetch")
     cfg = Config.from_env(home)
     cfg.corpus_mode = True
     cfg.dense_weight, cfg.sparse_weight = DENSE_W, round(1.0 - DENSE_W, 2)
+    _clear_tenant_sidecars(home)
     store = build_stack(cfg)
-    store.remember_many([{"content": t} for _d, t in docs])
-    shared = _make_embedder(vecs, qvecs, [t for _d, t in docs])
-    ids = [int(r["id"]) for r in store.conn.execute(
-        "SELECT id FROM memories ORDER BY id")]
-    store._mark_dirty()
-    store.index = BruteForceIndex(home / "vectors.npz", shared.dim)
-    store.index.add(ids, vecs)
-    store.embedder = shared
-
-    ranked, lat = [], []
-    for (_qid, qtext, _rel) in queries:
-        t = time.perf_counter()
-        hits = store.recall(qtext, k=RERANK_CANDS)
-        lat.append((time.perf_counter() - t) * 1000)
-        ranked.append([docs[h["id"] - 1][0] for h in hits])
-    store.close()
-    return ranked, lat
+    try:
+        store.remember_many([{"content": t} for _d, t in docs])
+        _install_benchmark_vectors(store, docs, vecs, qvecs, home)
+        ranked, lat = [], []
+        for (_qid, qtext, _rel) in queries:
+            t = time.perf_counter()
+            hits = store.recall(qtext, k=fetch, k_fetch=fetch)
+            lat.append((time.perf_counter() - t) * 1000)
+            ranked.append([docs[h["id"] - 1][0] for h in hits[:limit]])
+        return ranked, lat
+    finally:
+        store.close()
 
 
-def retrieve_omnidb_dense_only(docs, queries, vecs, qvecs, home: Path):
-    """Dense-only control: fusion weights 1.0/0.0 isolates the lexical leg."""
+def retrieve_omnidb_dense_only(docs, queries, vecs, qvecs, home: Path, *, limit=None):
+    """Exact dense-only control with configurable returned candidate count."""
     from omnidb_server.config import Config
     from omnidb_server.server import build_stack
-    from omnidb_server.vector_index import BruteForceIndex
 
+    limit = RERANK_CANDS if limit is None else int(limit)
     cfg = Config.from_env(home)
     cfg.corpus_mode = True
     cfg.dense_weight, cfg.sparse_weight = 1.0, 0.0
+    _clear_tenant_sidecars(home)
     store = build_stack(cfg)
-    store.remember_many([{"content": t} for _d, t in docs])
-    shared = _make_embedder(vecs, qvecs, [t for _d, t in docs])
-    ids = [int(r["id"]) for r in store.conn.execute(
-        "SELECT id FROM memories ORDER BY id")]
-    store._mark_dirty()
-    store.index = BruteForceIndex(home / "vectors.npz", shared.dim)
-    store.index.add(ids, vecs)
-    store.embedder = shared
-    ranked = []
-    for (_qid, qtext, _rel) in queries:
-        hits = store.recall(qtext, k=RERANK_CANDS)
-        ranked.append([docs[h["id"] - 1][0] for h in hits])
-    store.close()
-    return ranked
+    try:
+        store.remember_many([{"content": t} for _d, t in docs])
+        _install_benchmark_vectors(store, docs, vecs, qvecs, home)
+        ranked = []
+        for (_qid, qtext, _rel) in queries:
+            hits = store.recall(qtext, k=limit, k_fetch=limit)
+            ranked.append([docs[h["id"] - 1][0] for h in hits])
+        return ranked
+    finally:
+        store.close()
 
 
-def retrieve_bm25s(docs, queries, vecs, qvecs, home: Path):
+def retrieve_omnidb_sparse_only(docs, queries, vecs, qvecs, home: Path, *, limit=None):
+    """FTS5-only ranking through the production stack and tenant router."""
+    from omnidb_server.config import Config
+    from omnidb_server.server import build_stack
+
+    limit = RERANK_CANDS if limit is None else int(limit)
+    cfg = Config.from_env(home)
+    cfg.corpus_mode = True
+    cfg.dense_weight, cfg.sparse_weight = 0.0, 1.0
+    _clear_tenant_sidecars(home)
+    store = build_stack(cfg)
+    try:
+        store.remember_many([{"content": t} for _d, t in docs])
+        _install_benchmark_vectors(store, docs, vecs, qvecs, home)
+        ranked = []
+        for (_qid, qtext, _rel) in queries:
+            hits = store.recall(qtext, k=limit, k_fetch=limit)
+            ranked.append([docs[h["id"] - 1][0] for h in hits])
+        return ranked
+    finally:
+        store.close()
+
+
+def retrieve_bm25s(docs, queries, vecs, qvecs, home: Path, k=None):
     """BM25 baseline via bm25s (Lucene-equivalent, no JVM)."""
     import bm25s
 
@@ -336,11 +421,12 @@ def retrieve_bm25s(docs, queries, vecs, qvecs, home: Path):
     retriever = bm25s.BM25(method="lucene", k1=0.9, b=0.4)
     retriever.index(corpus_tokens)
     qtokens = bm25s.tokenize([q for _q, q, _r in queries], stopwords="en")
-    results, _scores = retriever.retrieve(qtokens, k=RERANK_CANDS)
+    k = RERANK_CANDS if k is None else int(k)
+    results, _scores = retriever.retrieve(qtokens, k=k)
     return [[docs[int(i)][0] for i in row] for row in results]
 
 
-def retrieve_pyserini(docs, queries, vecs, qvecs, home: Path):
+def retrieve_pyserini(docs, queries, vecs, qvecs, home: Path, *, k=None):
     """BM25 baseline via Pyserini/Anserini (the canonical BEIR baseline).
 
     Requires JAVA_HOME >= 21 (see tools/jdk-21 install note) and the
@@ -360,9 +446,10 @@ def retrieve_pyserini(docs, queries, vecs, qvecs, home: Path):
 
     searcher = LuceneSearcher(str(index_dir))
     searcher.set_bm25(k1=0.9, b=0.4)
+    k = RERANK_CANDS if k is None else int(k)
     ranked = []
     for (_q, qtext, _rel) in queries:
-        hits = searcher.search(qtext, k=RERANK_CANDS)
+        hits = searcher.search(qtext, k=k)
         ranked.append([docs[int(h.docid)][0] for h in hits])
     return ranked
 

@@ -1,0 +1,65 @@
+{
+  "source": "BEIR HuggingFace cached parquet and qrels test.tsv",
+  "files": {
+    "nfcorpus-corpus.parquet": {
+      "path": "bench/.cache3/beir/nfcorpus-corpus.parquet",
+      "bytes": 3157570,
+      "sha256": "f2a1c0b570a5efdf23cfa36f5e573d062cc113c6e7251e22c69b323a33ea895e"
+    },
+    "nfcorpus-queries.parquet": {
+      "path": "bench/.cache3/beir/nfcorpus-queries.parquet",
+      "bytes": 80929,
+      "sha256": "edd2b878b8130fb3b5e3c4b9428ddc1e67fbd6eedf8ae099fca3b87838ba6b29"
+    },
+    "nfcorpus-qrels-test.tsv": {
+      "path": "bench/.cache3/beir/nfcorpus-qrels-test.tsv",
+      "bytes": 279572,
+      "sha256": "f8fba6ef3d4dd9c3a242a8ba4ae38276fc3622fce7dcbae764766d564542fd2a"
+    },
+    "scifact-corpus.parquet": {
+      "path": "bench/.cache3/beir/scifact-corpus.parquet",
+      "bytes": 4469916,
+      "sha256": "243324b35f03d82bd6d98a5f575966876e86cad7ce16e5333a35b1b793dc4f45"
+    },
+    "scifact-queries.parquet": {
+      "path": "bench/.cache3/beir/scifact-queries.parquet",
+      "bytes": 64982,
+      "sha256": "1c37956c5dc8b810b60302323c24d1a9e79e26411ba8f5ad9d0888642e2a9034"
+    },
+    "scifact-qrels-test.tsv": {
+      "path": "bench/.cache3/beir/scifact-qrels-test.tsv",
+      "bytes": 5389,
+      "sha256": "0864bb985e0ca2367ba217977e72004d549054b2b06666ed9d4825ac7c21284c"
+    },
+    "scidocs-corpus.parquet": {
+      "path": "bench/.cache3/beir/scidocs-corpus.parquet",
+      "bytes": 18673258,
+      "sha256": "e1855cbf47a19e4ff1fc870674c3c441bc5a32a76ecc151851d4452a9aa43a28"
+    },
+    "scidocs-queries.parquet": {
+      "path": "bench/.cache3/beir/scidocs-queries.parquet",
+      "bytes": 92568,
+      "sha256": "f9ad7adff7d396e652789de371f69b5a3adfa8f39e1f37fff728c231e7db3202"
+    },
+    "scidocs-qrels-test.tsv": {
+      "path": "bench/.cache3/beir/scidocs-qrels-test.tsv",
+      "bytes": 2543906,
+      "sha256": "dcd3d7f77417294bb6f338537f3c28d8a5ea72b30fe6633f407fa85528767e35"
+    },
+    "fiqa-corpus.parquet": {
+      "path": "bench/.cache3/beir/fiqa-corpus.parquet",
+      "bytes": 27700817,
+      "sha256": "b36bb07dab3bfad488190818828e749a52faf5ba391c1d51dac8b06064576f99"
+    },
+    "fiqa-queries.parquet": {
+      "path": "bench/.cache3/beir/fiqa-queries.parquet",
+      "bytes": 321680,
+      "sha256": "e9b3863724ffd538d8efff19684ef8ae495bdbddd96b35e81bdc39e3e22860d6"
+    },
+    "fiqa-qrels-test.tsv": {
+      "path": "bench/.cache3/beir/fiqa-qrels-test.tsv",
+      "bytes": 25256,
+      "sha256": "6adc2a640dcdd22bb8b3858f89107adef2a7c3db20a63550dfa7a0f71e379e44"
+    }
+  }
+}

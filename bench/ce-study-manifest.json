@@ -1,0 +1,15 @@
+{
+  "protocol": "ce-study-protocol.md",
+  "revision_pins": {
+    "cross-encoder/ms-marco-MiniLM-L-6-v2": "233902d25c440f23af6f7d6e94d2946bac0bee0a",
+    "BAAI/bge-reranker-base": "2cfc18c9415c912f9d8155881c133215df768a70",
+    "BAAI/bge-reranker-large": "55611d7bca2a7133960a6d3b71e083071bbfc312",
+    "mixedbread-ai/mxbai-rerank-base-v2": "3ea9d4dffa7d12a4f366be8e275c349de9fc9865",
+    "ncbi/MedCPT-Cross-Encoder": "71caf65d4927987813984f54c284405a13fcca49"
+  },
+  "model_metadata": {
+    "BAAI/bge-reranker-large": {"parameters": 559891971, "max_positions": 512, "license": "MIT", "domain": "general multilingual reranking"},
+    "mixedbread-ai/mxbai-rerank-base-v2": {"parameters": 494032768, "max_positions": 32768, "license": "apache-2.0", "domain": "general multilingual/code/long-context reranking"},
+    "ncbi/MedCPT-Cross-Encoder": {"max_positions": 512, "license": "public-domain", "domain": "biomedical/PubMed search logs"}
+  }
+}

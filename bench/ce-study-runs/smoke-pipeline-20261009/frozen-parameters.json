@@ -1,0 +1,30 @@
+{
+  "alpha_grid": [
+    0.0,
+    0.1,
+    0.2,
+    0.3,
+    0.4,
+    0.5,
+    0.6,
+    0.7,
+    0.8,
+    0.9,
+    1.0
+  ],
+  "choices": {
+    "nfcorpus|minilm|hybrid|cross-encoder/ms-marco-MiniLM-L-6-v2": {
+      "alpha": 0.4,
+      "dev_mean_ndcg10": 0.3660881744446659,
+      "dev_rows": 258,
+      "rrf_k": 100
+    }
+  },
+  "protocol_version": "omnidb-ce-study-v1",
+  "rrf_k_grid": [
+    20,
+    60,
+    100
+  ],
+  "selection_partition": "dev"
+}
