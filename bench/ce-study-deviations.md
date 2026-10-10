@@ -119,9 +119,29 @@ file names the resuming PID, so a second writer cannot attach to the same phase.
 This changes nothing about the estimand or the split; it is recorded only so the artifact's
 timeline is reconstructible.
 
-## 3. Protocol document not amended in place
+## 4. Protocol document not amended in place
 
 By design, per the opening paragraph. The candidate-model notes in the frozen protocol name two
 models considered but not selected (`MiniLM-L12-v2`, DistillRankNET) alongside the three that
 were. The selection record is `ce-study-manifest.json` plus the run config's `rerankers` map; the
 protocol text is historical and is not edited to match later decisions.
+
+## 5. Host reboot mid-run (execution, not measurement)
+
+The host rebooted at 2026-10-10 23:54 (Windows auto-maintenance; the session's `nohup` worker
+died with it). The lock file named the now-dead PID 4752, so on next launch the run correctly
+refused to start against it until the stale owner was verified gone. The dev partition file was
+unharmed: `dev-scores.jsonl` ends on a newline, all 98,509 records parse, and the last row is a
+complete `mxbai-rerank-base-v2/scidocs` record.
+
+On resume, the runner's immutable-config check refused the start for the correct reason: the code
+SHA had moved from `6536e130` (when the run began) to `016b1e9c` because of the two hardening
+commits (`f2d49a5` dedup + lock, `016b1e9` score-cache verification). The diff between the two
+SHAs touches only `read_scores` and the lock helpers - `score_partition`, `score_pairs`,
+`load_reranker`, and every `model.predict` call are byte-identical - so the 98,509 already-scored
+rows remain valid and the change was recorded with `--record-code-sha-change` naming that. The
+resume then skipped the three finished rerankers and the two finished mxbai corpora with `rows=0`
+and continued from `mxbai-rerank-base-v2/scidocs` at the expected rate.
+
+This changes nothing about the estimand or the split; it is recorded only so the artifact's
+timeline is reconstructible.

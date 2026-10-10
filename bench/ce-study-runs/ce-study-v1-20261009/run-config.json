@@ -8,7 +8,7 @@
       "to": 32
     }
   ],
-  "code_sha": "6536e130cc52777a6728fcacc6f7d1ebd74d97d8",
+  "code_sha": "016b1e9c48be4cebbc7e3718e93e69d708706bfb",
   "code_sha_history": [
     {
       "from": "36d848b059ce3d836fb4d2da7696796e6ea0bae9",
@@ -21,6 +21,12 @@
       "reason": "fresh-home retrieval fix (6536e13): pools regenerate byte-identically (0/323 nfcorpus queries differ), so the collected pools remain valid",
       "recorded_unix": 1791521868.5730898,
       "to": "6536e130cc52777a6728fcacc6f7d1ebd74d97d8"
+    },
+    {
+      "from": "6536e130cc52777a6728fcacc6f7d1ebd74d97d8",
+      "reason": "post-reboot resume; added read_scores dedup + run lock (f2d49a5), verified score-cache rank-neutrality (016b1e9). Scoring path (score_partition/score_pairs/load_reranker/model.predict) is byte-identical between the two SHAs, so all 98509 already-scored rows remain valid.",
+      "recorded_unix": 1791657598.3520038,
+      "to": "016b1e9c48be4cebbc7e3718e93e69d708706bfb"
     }
   ],
   "corpora": [
