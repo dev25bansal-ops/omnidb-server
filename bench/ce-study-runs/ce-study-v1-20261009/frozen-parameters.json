@@ -1,0 +1,1344 @@
+{
+  "alpha_grid": [
+    0.0,
+    0.1,
+    0.2,
+    0.3,
+    0.4,
+    0.5,
+    0.6,
+    0.7,
+    0.8,
+    0.9,
+    1.0
+  ],
+  "choices": {
+    "fiqa|bge-base|dense|BAAI/bge-reranker-base": {
+      "alpha": 0.4,
+      "dev_mean_ndcg10": 0.4113170689324812,
+      "dev_rows": 777,
+      "rrf_k": 20
+    },
+    "fiqa|bge-base|dense|BAAI/bge-reranker-large": {
+      "alpha": 0.6,
+      "dev_mean_ndcg10": 0.43194370608278604,
+      "dev_rows": 777,
+      "rrf_k": 20
+    },
+    "fiqa|bge-base|dense|cross-encoder/ms-marco-MiniLM-L-6-v2": {
+      "alpha": 0.5,
+      "dev_mean_ndcg10": 0.40785645275302573,
+      "dev_rows": 777,
+      "rrf_k": 20
+    },
+    "fiqa|bge-base|dense|mixedbread-ai/mxbai-rerank-base-v2": {
+      "alpha": 0.9,
+      "dev_mean_ndcg10": 0.4536320088963906,
+      "dev_rows": 777,
+      "rrf_k": 100
+    },
+    "fiqa|bge-base|dense|ncbi/MedCPT-Cross-Encoder": {
+      "alpha": 0.3,
+      "dev_mean_ndcg10": 0.4033232999725241,
+      "dev_rows": 777,
+      "rrf_k": 20
+    },
+    "fiqa|bge-base|hybrid|BAAI/bge-reranker-base": {
+      "alpha": 0.4,
+      "dev_mean_ndcg10": 0.4111687526920669,
+      "dev_rows": 777,
+      "rrf_k": 20
+    },
+    "fiqa|bge-base|hybrid|BAAI/bge-reranker-large": {
+      "alpha": 0.6,
+      "dev_mean_ndcg10": 0.43281625328181367,
+      "dev_rows": 777,
+      "rrf_k": 20
+    },
+    "fiqa|bge-base|hybrid|cross-encoder/ms-marco-MiniLM-L-6-v2": {
+      "alpha": 0.5,
+      "dev_mean_ndcg10": 0.40052196576402493,
+      "dev_rows": 777,
+      "rrf_k": 20
+    },
+    "fiqa|bge-base|hybrid|mixedbread-ai/mxbai-rerank-base-v2": {
+      "alpha": 1.0,
+      "dev_mean_ndcg10": 0.45067986237329744,
+      "dev_rows": 777,
+      "rrf_k": 20
+    },
+    "fiqa|bge-base|hybrid|ncbi/MedCPT-Cross-Encoder": {
+      "alpha": 0.2,
+      "dev_mean_ndcg10": 0.3956213952140852,
+      "dev_rows": 777,
+      "rrf_k": 20
+    },
+    "fiqa|bge-small|dense|BAAI/bge-reranker-base": {
+      "alpha": 0.5,
+      "dev_mean_ndcg10": 0.4038323555420933,
+      "dev_rows": 777,
+      "rrf_k": 20
+    },
+    "fiqa|bge-small|dense|BAAI/bge-reranker-large": {
+      "alpha": 0.6,
+      "dev_mean_ndcg10": 0.43449754287448505,
+      "dev_rows": 777,
+      "rrf_k": 20
+    },
+    "fiqa|bge-small|dense|cross-encoder/ms-marco-MiniLM-L-6-v2": {
+      "alpha": 0.4,
+      "dev_mean_ndcg10": 0.40407490117503425,
+      "dev_rows": 777,
+      "rrf_k": 20
+    },
+    "fiqa|bge-small|dense|mixedbread-ai/mxbai-rerank-base-v2": {
+      "alpha": 1.0,
+      "dev_mean_ndcg10": 0.45149718712434983,
+      "dev_rows": 777,
+      "rrf_k": 20
+    },
+    "fiqa|bge-small|dense|ncbi/MedCPT-Cross-Encoder": {
+      "alpha": 0.3,
+      "dev_mean_ndcg10": 0.3929301977162789,
+      "dev_rows": 777,
+      "rrf_k": 20
+    },
+    "fiqa|bge-small|hybrid|BAAI/bge-reranker-base": {
+      "alpha": 0.3,
+      "dev_mean_ndcg10": 0.4056788787890772,
+      "dev_rows": 777,
+      "rrf_k": 60
+    },
+    "fiqa|bge-small|hybrid|BAAI/bge-reranker-large": {
+      "alpha": 0.5,
+      "dev_mean_ndcg10": 0.4338695298283907,
+      "dev_rows": 777,
+      "rrf_k": 100
+    },
+    "fiqa|bge-small|hybrid|cross-encoder/ms-marco-MiniLM-L-6-v2": {
+      "alpha": 0.4,
+      "dev_mean_ndcg10": 0.4024701089063896,
+      "dev_rows": 777,
+      "rrf_k": 20
+    },
+    "fiqa|bge-small|hybrid|mixedbread-ai/mxbai-rerank-base-v2": {
+      "alpha": 0.9,
+      "dev_mean_ndcg10": 0.4499002609120075,
+      "dev_rows": 777,
+      "rrf_k": 100
+    },
+    "fiqa|bge-small|hybrid|ncbi/MedCPT-Cross-Encoder": {
+      "alpha": 0.2,
+      "dev_mean_ndcg10": 0.3904216629877082,
+      "dev_rows": 777,
+      "rrf_k": 20
+    },
+    "fiqa|e5-small|dense|BAAI/bge-reranker-base": {
+      "alpha": 0.6,
+      "dev_mean_ndcg10": 0.4055233866337282,
+      "dev_rows": 777,
+      "rrf_k": 20
+    },
+    "fiqa|e5-small|dense|BAAI/bge-reranker-large": {
+      "alpha": 0.7,
+      "dev_mean_ndcg10": 0.4269802312583095,
+      "dev_rows": 777,
+      "rrf_k": 20
+    },
+    "fiqa|e5-small|dense|cross-encoder/ms-marco-MiniLM-L-6-v2": {
+      "alpha": 0.6,
+      "dev_mean_ndcg10": 0.40520560036115816,
+      "dev_rows": 777,
+      "rrf_k": 20
+    },
+    "fiqa|e5-small|dense|mixedbread-ai/mxbai-rerank-base-v2": {
+      "alpha": 1.0,
+      "dev_mean_ndcg10": 0.4470223291096597,
+      "dev_rows": 777,
+      "rrf_k": 20
+    },
+    "fiqa|e5-small|dense|ncbi/MedCPT-Cross-Encoder": {
+      "alpha": 0.5,
+      "dev_mean_ndcg10": 0.3916414938656285,
+      "dev_rows": 777,
+      "rrf_k": 20
+    },
+    "fiqa|e5-small|hybrid|BAAI/bge-reranker-base": {
+      "alpha": 0.5,
+      "dev_mean_ndcg10": 0.40992226377201274,
+      "dev_rows": 777,
+      "rrf_k": 20
+    },
+    "fiqa|e5-small|hybrid|BAAI/bge-reranker-large": {
+      "alpha": 0.7,
+      "dev_mean_ndcg10": 0.42586353146820066,
+      "dev_rows": 777,
+      "rrf_k": 60
+    },
+    "fiqa|e5-small|hybrid|cross-encoder/ms-marco-MiniLM-L-6-v2": {
+      "alpha": 0.5,
+      "dev_mean_ndcg10": 0.4004469048273999,
+      "dev_rows": 777,
+      "rrf_k": 20
+    },
+    "fiqa|e5-small|hybrid|mixedbread-ai/mxbai-rerank-base-v2": {
+      "alpha": 1.0,
+      "dev_mean_ndcg10": 0.44137407389577293,
+      "dev_rows": 777,
+      "rrf_k": 20
+    },
+    "fiqa|e5-small|hybrid|ncbi/MedCPT-Cross-Encoder": {
+      "alpha": 0.3,
+      "dev_mean_ndcg10": 0.38943800180922405,
+      "dev_rows": 777,
+      "rrf_k": 20
+    },
+    "fiqa|minilm|bm25s|BAAI/bge-reranker-base": {
+      "alpha": 1.0,
+      "dev_mean_ndcg10": 0.30519993222080327,
+      "dev_rows": 777,
+      "rrf_k": 20
+    },
+    "fiqa|minilm|bm25s|BAAI/bge-reranker-large": {
+      "alpha": 0.8,
+      "dev_mean_ndcg10": 0.33658608947176044,
+      "dev_rows": 777,
+      "rrf_k": 20
+    },
+    "fiqa|minilm|bm25s|cross-encoder/ms-marco-MiniLM-L-6-v2": {
+      "alpha": 0.9,
+      "dev_mean_ndcg10": 0.32389637719636366,
+      "dev_rows": 777,
+      "rrf_k": 20
+    },
+    "fiqa|minilm|bm25s|mixedbread-ai/mxbai-rerank-base-v2": {
+      "alpha": 1.0,
+      "dev_mean_ndcg10": 0.3458192830349172,
+      "dev_rows": 777,
+      "rrf_k": 20
+    },
+    "fiqa|minilm|bm25s|ncbi/MedCPT-Cross-Encoder": {
+      "alpha": 0.8,
+      "dev_mean_ndcg10": 0.27627572975977577,
+      "dev_rows": 777,
+      "rrf_k": 20
+    },
+    "fiqa|minilm|dense|BAAI/bge-reranker-base": {
+      "alpha": 0.5,
+      "dev_mean_ndcg10": 0.39073751461575307,
+      "dev_rows": 777,
+      "rrf_k": 20
+    },
+    "fiqa|minilm|dense|BAAI/bge-reranker-large": {
+      "alpha": 0.7,
+      "dev_mean_ndcg10": 0.43198897903676753,
+      "dev_rows": 777,
+      "rrf_k": 20
+    },
+    "fiqa|minilm|dense|cross-encoder/ms-marco-MiniLM-L-6-v2": {
+      "alpha": 0.7,
+      "dev_mean_ndcg10": 0.38993731556340144,
+      "dev_rows": 777,
+      "rrf_k": 20
+    },
+    "fiqa|minilm|dense|mixedbread-ai/mxbai-rerank-base-v2": {
+      "alpha": 1.0,
+      "dev_mean_ndcg10": 0.4416837032211132,
+      "dev_rows": 777,
+      "rrf_k": 20
+    },
+    "fiqa|minilm|dense|ncbi/MedCPT-Cross-Encoder": {
+      "alpha": 0.4,
+      "dev_mean_ndcg10": 0.36969390325659307,
+      "dev_rows": 777,
+      "rrf_k": 20
+    },
+    "fiqa|minilm|fts5_sparse|BAAI/bge-reranker-base": {
+      "alpha": 0.9,
+      "dev_mean_ndcg10": 0.3289326171583358,
+      "dev_rows": 777,
+      "rrf_k": 100
+    },
+    "fiqa|minilm|fts5_sparse|BAAI/bge-reranker-large": {
+      "alpha": 1.0,
+      "dev_mean_ndcg10": 0.36219562568638136,
+      "dev_rows": 777,
+      "rrf_k": 20
+    },
+    "fiqa|minilm|fts5_sparse|cross-encoder/ms-marco-MiniLM-L-6-v2": {
+      "alpha": 1.0,
+      "dev_mean_ndcg10": 0.33543478802390864,
+      "dev_rows": 777,
+      "rrf_k": 20
+    },
+    "fiqa|minilm|fts5_sparse|mixedbread-ai/mxbai-rerank-base-v2": {
+      "alpha": 1.0,
+      "dev_mean_ndcg10": 0.36462788916041533,
+      "dev_rows": 777,
+      "rrf_k": 20
+    },
+    "fiqa|minilm|fts5_sparse|ncbi/MedCPT-Cross-Encoder": {
+      "alpha": 0.7,
+      "dev_mean_ndcg10": 0.28347735338713753,
+      "dev_rows": 777,
+      "rrf_k": 20
+    },
+    "fiqa|minilm|hybrid|BAAI/bge-reranker-base": {
+      "alpha": 0.4,
+      "dev_mean_ndcg10": 0.3935162691419361,
+      "dev_rows": 777,
+      "rrf_k": 20
+    },
+    "fiqa|minilm|hybrid|BAAI/bge-reranker-large": {
+      "alpha": 0.7,
+      "dev_mean_ndcg10": 0.42290752819475225,
+      "dev_rows": 777,
+      "rrf_k": 20
+    },
+    "fiqa|minilm|hybrid|cross-encoder/ms-marco-MiniLM-L-6-v2": {
+      "alpha": 0.5,
+      "dev_mean_ndcg10": 0.39063765748555723,
+      "dev_rows": 777,
+      "rrf_k": 20
+    },
+    "fiqa|minilm|hybrid|mixedbread-ai/mxbai-rerank-base-v2": {
+      "alpha": 1.0,
+      "dev_mean_ndcg10": 0.4412711196921701,
+      "dev_rows": 777,
+      "rrf_k": 20
+    },
+    "fiqa|minilm|hybrid|ncbi/MedCPT-Cross-Encoder": {
+      "alpha": 0.3,
+      "dev_mean_ndcg10": 0.37427563015143783,
+      "dev_rows": 777,
+      "rrf_k": 60
+    },
+    "fiqa|minilm|pyserini|BAAI/bge-reranker-base": {
+      "alpha": 0.9,
+      "dev_mean_ndcg10": 0.31632638246301,
+      "dev_rows": 777,
+      "rrf_k": 20
+    },
+    "fiqa|minilm|pyserini|BAAI/bge-reranker-large": {
+      "alpha": 1.0,
+      "dev_mean_ndcg10": 0.3521493746860142,
+      "dev_rows": 777,
+      "rrf_k": 20
+    },
+    "fiqa|minilm|pyserini|cross-encoder/ms-marco-MiniLM-L-6-v2": {
+      "alpha": 0.9,
+      "dev_mean_ndcg10": 0.331601968782763,
+      "dev_rows": 777,
+      "rrf_k": 20
+    },
+    "fiqa|minilm|pyserini|mixedbread-ai/mxbai-rerank-base-v2": {
+      "alpha": 1.0,
+      "dev_mean_ndcg10": 0.35117110539613844,
+      "dev_rows": 777,
+      "rrf_k": 20
+    },
+    "fiqa|minilm|pyserini|ncbi/MedCPT-Cross-Encoder": {
+      "alpha": 0.7,
+      "dev_mean_ndcg10": 0.27595432537161213,
+      "dev_rows": 777,
+      "rrf_k": 20
+    },
+    "nfcorpus|bge-base|dense|BAAI/bge-reranker-base": {
+      "alpha": 0.1,
+      "dev_mean_ndcg10": 0.39216410292469167,
+      "dev_rows": 387,
+      "rrf_k": 100
+    },
+    "nfcorpus|bge-base|dense|BAAI/bge-reranker-large": {
+      "alpha": 0.3,
+      "dev_mean_ndcg10": 0.3965414317444314,
+      "dev_rows": 387,
+      "rrf_k": 20
+    },
+    "nfcorpus|bge-base|dense|cross-encoder/ms-marco-MiniLM-L-6-v2": {
+      "alpha": 0.2,
+      "dev_mean_ndcg10": 0.3971768389747732,
+      "dev_rows": 387,
+      "rrf_k": 20
+    },
+    "nfcorpus|bge-base|dense|mixedbread-ai/mxbai-rerank-base-v2": {
+      "alpha": 0.6,
+      "dev_mean_ndcg10": 0.4141635273617507,
+      "dev_rows": 387,
+      "rrf_k": 20
+    },
+    "nfcorpus|bge-base|dense|ncbi/MedCPT-Cross-Encoder": {
+      "alpha": 0.5,
+      "dev_mean_ndcg10": 0.40894819635334545,
+      "dev_rows": 387,
+      "rrf_k": 20
+    },
+    "nfcorpus|bge-base|hybrid|BAAI/bge-reranker-base": {
+      "alpha": 0.1,
+      "dev_mean_ndcg10": 0.3915970662530643,
+      "dev_rows": 387,
+      "rrf_k": 60
+    },
+    "nfcorpus|bge-base|hybrid|BAAI/bge-reranker-large": {
+      "alpha": 0.2,
+      "dev_mean_ndcg10": 0.3963888757682121,
+      "dev_rows": 387,
+      "rrf_k": 20
+    },
+    "nfcorpus|bge-base|hybrid|cross-encoder/ms-marco-MiniLM-L-6-v2": {
+      "alpha": 0.2,
+      "dev_mean_ndcg10": 0.3924061154938199,
+      "dev_rows": 387,
+      "rrf_k": 20
+    },
+    "nfcorpus|bge-base|hybrid|mixedbread-ai/mxbai-rerank-base-v2": {
+      "alpha": 0.6,
+      "dev_mean_ndcg10": 0.41480084922455224,
+      "dev_rows": 387,
+      "rrf_k": 20
+    },
+    "nfcorpus|bge-base|hybrid|ncbi/MedCPT-Cross-Encoder": {
+      "alpha": 0.5,
+      "dev_mean_ndcg10": 0.40481741216434036,
+      "dev_rows": 387,
+      "rrf_k": 20
+    },
+    "nfcorpus|bge-small|dense|BAAI/bge-reranker-base": {
+      "alpha": 0.1,
+      "dev_mean_ndcg10": 0.36327396181798416,
+      "dev_rows": 387,
+      "rrf_k": 20
+    },
+    "nfcorpus|bge-small|dense|BAAI/bge-reranker-large": {
+      "alpha": 0.5,
+      "dev_mean_ndcg10": 0.3752880583192737,
+      "dev_rows": 387,
+      "rrf_k": 20
+    },
+    "nfcorpus|bge-small|dense|cross-encoder/ms-marco-MiniLM-L-6-v2": {
+      "alpha": 0.7,
+      "dev_mean_ndcg10": 0.37479315850298106,
+      "dev_rows": 387,
+      "rrf_k": 20
+    },
+    "nfcorpus|bge-small|dense|mixedbread-ai/mxbai-rerank-base-v2": {
+      "alpha": 0.7,
+      "dev_mean_ndcg10": 0.396984378881548,
+      "dev_rows": 387,
+      "rrf_k": 60
+    },
+    "nfcorpus|bge-small|dense|ncbi/MedCPT-Cross-Encoder": {
+      "alpha": 0.7,
+      "dev_mean_ndcg10": 0.3892720981126707,
+      "dev_rows": 387,
+      "rrf_k": 100
+    },
+    "nfcorpus|bge-small|hybrid|BAAI/bge-reranker-base": {
+      "alpha": 0.0,
+      "dev_mean_ndcg10": 0.378246935369809,
+      "dev_rows": 387,
+      "rrf_k": 20
+    },
+    "nfcorpus|bge-small|hybrid|BAAI/bge-reranker-large": {
+      "alpha": 0.2,
+      "dev_mean_ndcg10": 0.3808340672805861,
+      "dev_rows": 387,
+      "rrf_k": 20
+    },
+    "nfcorpus|bge-small|hybrid|cross-encoder/ms-marco-MiniLM-L-6-v2": {
+      "alpha": 0.2,
+      "dev_mean_ndcg10": 0.37845532950503563,
+      "dev_rows": 387,
+      "rrf_k": 20
+    },
+    "nfcorpus|bge-small|hybrid|mixedbread-ai/mxbai-rerank-base-v2": {
+      "alpha": 0.7,
+      "dev_mean_ndcg10": 0.39910735807606473,
+      "dev_rows": 387,
+      "rrf_k": 20
+    },
+    "nfcorpus|bge-small|hybrid|ncbi/MedCPT-Cross-Encoder": {
+      "alpha": 0.6,
+      "dev_mean_ndcg10": 0.3914258284509044,
+      "dev_rows": 387,
+      "rrf_k": 20
+    },
+    "nfcorpus|e5-small|dense|BAAI/bge-reranker-base": {
+      "alpha": 0.3,
+      "dev_mean_ndcg10": 0.34860656481377933,
+      "dev_rows": 387,
+      "rrf_k": 20
+    },
+    "nfcorpus|e5-small|dense|BAAI/bge-reranker-large": {
+      "alpha": 0.8,
+      "dev_mean_ndcg10": 0.3650591135907019,
+      "dev_rows": 387,
+      "rrf_k": 20
+    },
+    "nfcorpus|e5-small|dense|cross-encoder/ms-marco-MiniLM-L-6-v2": {
+      "alpha": 0.8,
+      "dev_mean_ndcg10": 0.3611334418525359,
+      "dev_rows": 387,
+      "rrf_k": 100
+    },
+    "nfcorpus|e5-small|dense|mixedbread-ai/mxbai-rerank-base-v2": {
+      "alpha": 0.8,
+      "dev_mean_ndcg10": 0.3883702245063296,
+      "dev_rows": 387,
+      "rrf_k": 60
+    },
+    "nfcorpus|e5-small|dense|ncbi/MedCPT-Cross-Encoder": {
+      "alpha": 0.8,
+      "dev_mean_ndcg10": 0.37392155370580715,
+      "dev_rows": 387,
+      "rrf_k": 60
+    },
+    "nfcorpus|e5-small|hybrid|BAAI/bge-reranker-base": {
+      "alpha": 0.3,
+      "dev_mean_ndcg10": 0.3596767107545096,
+      "dev_rows": 387,
+      "rrf_k": 20
+    },
+    "nfcorpus|e5-small|hybrid|BAAI/bge-reranker-large": {
+      "alpha": 0.5,
+      "dev_mean_ndcg10": 0.373258295959271,
+      "dev_rows": 387,
+      "rrf_k": 20
+    },
+    "nfcorpus|e5-small|hybrid|cross-encoder/ms-marco-MiniLM-L-6-v2": {
+      "alpha": 0.7,
+      "dev_mean_ndcg10": 0.36282838555916513,
+      "dev_rows": 387,
+      "rrf_k": 60
+    },
+    "nfcorpus|e5-small|hybrid|mixedbread-ai/mxbai-rerank-base-v2": {
+      "alpha": 0.8,
+      "dev_mean_ndcg10": 0.3899602564700084,
+      "dev_rows": 387,
+      "rrf_k": 20
+    },
+    "nfcorpus|e5-small|hybrid|ncbi/MedCPT-Cross-Encoder": {
+      "alpha": 0.8,
+      "dev_mean_ndcg10": 0.37693992787257075,
+      "dev_rows": 387,
+      "rrf_k": 20
+    },
+    "nfcorpus|minilm|bm25s|BAAI/bge-reranker-base": {
+      "alpha": 0.7,
+      "dev_mean_ndcg10": 0.3210450473873461,
+      "dev_rows": 387,
+      "rrf_k": 20
+    },
+    "nfcorpus|minilm|bm25s|BAAI/bge-reranker-large": {
+      "alpha": 0.8,
+      "dev_mean_ndcg10": 0.3418019745289629,
+      "dev_rows": 387,
+      "rrf_k": 100
+    },
+    "nfcorpus|minilm|bm25s|cross-encoder/ms-marco-MiniLM-L-6-v2": {
+      "alpha": 0.9,
+      "dev_mean_ndcg10": 0.3433432811332548,
+      "dev_rows": 387,
+      "rrf_k": 20
+    },
+    "nfcorpus|minilm|bm25s|mixedbread-ai/mxbai-rerank-base-v2": {
+      "alpha": 1.0,
+      "dev_mean_ndcg10": 0.35505178851646885,
+      "dev_rows": 387,
+      "rrf_k": 20
+    },
+    "nfcorpus|minilm|bm25s|ncbi/MedCPT-Cross-Encoder": {
+      "alpha": 0.9,
+      "dev_mean_ndcg10": 0.3519658316834047,
+      "dev_rows": 387,
+      "rrf_k": 60
+    },
+    "nfcorpus|minilm|dense|BAAI/bge-reranker-base": {
+      "alpha": 0.4,
+      "dev_mean_ndcg10": 0.3534102142241881,
+      "dev_rows": 387,
+      "rrf_k": 20
+    },
+    "nfcorpus|minilm|dense|BAAI/bge-reranker-large": {
+      "alpha": 0.5,
+      "dev_mean_ndcg10": 0.3724627675820882,
+      "dev_rows": 387,
+      "rrf_k": 60
+    },
+    "nfcorpus|minilm|dense|cross-encoder/ms-marco-MiniLM-L-6-v2": {
+      "alpha": 0.6,
+      "dev_mean_ndcg10": 0.360171325705136,
+      "dev_rows": 387,
+      "rrf_k": 20
+    },
+    "nfcorpus|minilm|dense|mixedbread-ai/mxbai-rerank-base-v2": {
+      "alpha": 0.8,
+      "dev_mean_ndcg10": 0.38806436368966085,
+      "dev_rows": 387,
+      "rrf_k": 20
+    },
+    "nfcorpus|minilm|dense|ncbi/MedCPT-Cross-Encoder": {
+      "alpha": 0.7,
+      "dev_mean_ndcg10": 0.3800601123106013,
+      "dev_rows": 387,
+      "rrf_k": 20
+    },
+    "nfcorpus|minilm|fts5_sparse|BAAI/bge-reranker-base": {
+      "alpha": 0.4,
+      "dev_mean_ndcg10": 0.35733056365781724,
+      "dev_rows": 387,
+      "rrf_k": 20
+    },
+    "nfcorpus|minilm|fts5_sparse|BAAI/bge-reranker-large": {
+      "alpha": 0.7,
+      "dev_mean_ndcg10": 0.3694829597325245,
+      "dev_rows": 387,
+      "rrf_k": 100
+    },
+    "nfcorpus|minilm|fts5_sparse|cross-encoder/ms-marco-MiniLM-L-6-v2": {
+      "alpha": 0.7,
+      "dev_mean_ndcg10": 0.3675792437901097,
+      "dev_rows": 387,
+      "rrf_k": 100
+    },
+    "nfcorpus|minilm|fts5_sparse|mixedbread-ai/mxbai-rerank-base-v2": {
+      "alpha": 0.8,
+      "dev_mean_ndcg10": 0.38419160109090983,
+      "dev_rows": 387,
+      "rrf_k": 60
+    },
+    "nfcorpus|minilm|fts5_sparse|ncbi/MedCPT-Cross-Encoder": {
+      "alpha": 0.7,
+      "dev_mean_ndcg10": 0.3754984098472745,
+      "dev_rows": 387,
+      "rrf_k": 20
+    },
+    "nfcorpus|minilm|hybrid|BAAI/bge-reranker-base": {
+      "alpha": 0.4,
+      "dev_mean_ndcg10": 0.366018183539684,
+      "dev_rows": 387,
+      "rrf_k": 100
+    },
+    "nfcorpus|minilm|hybrid|BAAI/bge-reranker-large": {
+      "alpha": 0.5,
+      "dev_mean_ndcg10": 0.3762694758662614,
+      "dev_rows": 387,
+      "rrf_k": 100
+    },
+    "nfcorpus|minilm|hybrid|cross-encoder/ms-marco-MiniLM-L-6-v2": {
+      "alpha": 0.4,
+      "dev_mean_ndcg10": 0.3668919401622261,
+      "dev_rows": 387,
+      "rrf_k": 100
+    },
+    "nfcorpus|minilm|hybrid|mixedbread-ai/mxbai-rerank-base-v2": {
+      "alpha": 0.6,
+      "dev_mean_ndcg10": 0.3941308028136599,
+      "dev_rows": 387,
+      "rrf_k": 20
+    },
+    "nfcorpus|minilm|hybrid|ncbi/MedCPT-Cross-Encoder": {
+      "alpha": 0.8,
+      "dev_mean_ndcg10": 0.3829348691851829,
+      "dev_rows": 387,
+      "rrf_k": 20
+    },
+    "nfcorpus|minilm|pyserini|BAAI/bge-reranker-base": {
+      "alpha": 0.4,
+      "dev_mean_ndcg10": 0.34742175397523356,
+      "dev_rows": 387,
+      "rrf_k": 60
+    },
+    "nfcorpus|minilm|pyserini|BAAI/bge-reranker-large": {
+      "alpha": 0.7,
+      "dev_mean_ndcg10": 0.36455354367089005,
+      "dev_rows": 387,
+      "rrf_k": 20
+    },
+    "nfcorpus|minilm|pyserini|cross-encoder/ms-marco-MiniLM-L-6-v2": {
+      "alpha": 0.8,
+      "dev_mean_ndcg10": 0.3686315580280302,
+      "dev_rows": 387,
+      "rrf_k": 20
+    },
+    "nfcorpus|minilm|pyserini|mixedbread-ai/mxbai-rerank-base-v2": {
+      "alpha": 0.9,
+      "dev_mean_ndcg10": 0.3808380002369156,
+      "dev_rows": 387,
+      "rrf_k": 60
+    },
+    "nfcorpus|minilm|pyserini|ncbi/MedCPT-Cross-Encoder": {
+      "alpha": 0.8,
+      "dev_mean_ndcg10": 0.3697961203065225,
+      "dev_rows": 387,
+      "rrf_k": 20
+    },
+    "scidocs|bge-base|dense|BAAI/bge-reranker-base": {
+      "alpha": 0.3,
+      "dev_mean_ndcg10": 0.22914569688817943,
+      "dev_rows": 1200,
+      "rrf_k": 60
+    },
+    "scidocs|bge-base|dense|BAAI/bge-reranker-large": {
+      "alpha": 0.3,
+      "dev_mean_ndcg10": 0.22911743421492461,
+      "dev_rows": 1200,
+      "rrf_k": 20
+    },
+    "scidocs|bge-base|dense|cross-encoder/ms-marco-MiniLM-L-6-v2": {
+      "alpha": 0.3,
+      "dev_mean_ndcg10": 0.2258177172320471,
+      "dev_rows": 1200,
+      "rrf_k": 20
+    },
+    "scidocs|bge-base|dense|mixedbread-ai/mxbai-rerank-base-v2": {
+      "alpha": 0.3,
+      "dev_mean_ndcg10": 0.22965506141424577,
+      "dev_rows": 1200,
+      "rrf_k": 20
+    },
+    "scidocs|bge-base|dense|ncbi/MedCPT-Cross-Encoder": {
+      "alpha": 0.5,
+      "dev_mean_ndcg10": 0.2274025299682375,
+      "dev_rows": 1200,
+      "rrf_k": 20
+    },
+    "scidocs|bge-base|hybrid|BAAI/bge-reranker-base": {
+      "alpha": 0.3,
+      "dev_mean_ndcg10": 0.21353265728484747,
+      "dev_rows": 1200,
+      "rrf_k": 20
+    },
+    "scidocs|bge-base|hybrid|BAAI/bge-reranker-large": {
+      "alpha": 0.3,
+      "dev_mean_ndcg10": 0.21414138221781123,
+      "dev_rows": 1200,
+      "rrf_k": 20
+    },
+    "scidocs|bge-base|hybrid|cross-encoder/ms-marco-MiniLM-L-6-v2": {
+      "alpha": 0.2,
+      "dev_mean_ndcg10": 0.2093153005577614,
+      "dev_rows": 1200,
+      "rrf_k": 20
+    },
+    "scidocs|bge-base|hybrid|mixedbread-ai/mxbai-rerank-base-v2": {
+      "alpha": 0.3,
+      "dev_mean_ndcg10": 0.2195022832059967,
+      "dev_rows": 1200,
+      "rrf_k": 20
+    },
+    "scidocs|bge-base|hybrid|ncbi/MedCPT-Cross-Encoder": {
+      "alpha": 0.4,
+      "dev_mean_ndcg10": 0.21264468384872834,
+      "dev_rows": 1200,
+      "rrf_k": 20
+    },
+    "scidocs|bge-small|dense|BAAI/bge-reranker-base": {
+      "alpha": 0.2,
+      "dev_mean_ndcg10": 0.21799562416621635,
+      "dev_rows": 1200,
+      "rrf_k": 20
+    },
+    "scidocs|bge-small|dense|BAAI/bge-reranker-large": {
+      "alpha": 0.5,
+      "dev_mean_ndcg10": 0.22019421569384182,
+      "dev_rows": 1200,
+      "rrf_k": 20
+    },
+    "scidocs|bge-small|dense|cross-encoder/ms-marco-MiniLM-L-6-v2": {
+      "alpha": 0.3,
+      "dev_mean_ndcg10": 0.21441475374442812,
+      "dev_rows": 1200,
+      "rrf_k": 20
+    },
+    "scidocs|bge-small|dense|mixedbread-ai/mxbai-rerank-base-v2": {
+      "alpha": 0.5,
+      "dev_mean_ndcg10": 0.2245848672457881,
+      "dev_rows": 1200,
+      "rrf_k": 20
+    },
+    "scidocs|bge-small|dense|ncbi/MedCPT-Cross-Encoder": {
+      "alpha": 0.3,
+      "dev_mean_ndcg10": 0.2174217741881365,
+      "dev_rows": 1200,
+      "rrf_k": 20
+    },
+    "scidocs|bge-small|hybrid|BAAI/bge-reranker-base": {
+      "alpha": 0.5,
+      "dev_mean_ndcg10": 0.2090266042624862,
+      "dev_rows": 1200,
+      "rrf_k": 20
+    },
+    "scidocs|bge-small|hybrid|BAAI/bge-reranker-large": {
+      "alpha": 0.5,
+      "dev_mean_ndcg10": 0.2139493492687912,
+      "dev_rows": 1200,
+      "rrf_k": 20
+    },
+    "scidocs|bge-small|hybrid|cross-encoder/ms-marco-MiniLM-L-6-v2": {
+      "alpha": 0.3,
+      "dev_mean_ndcg10": 0.2042302264619055,
+      "dev_rows": 1200,
+      "rrf_k": 20
+    },
+    "scidocs|bge-small|hybrid|mixedbread-ai/mxbai-rerank-base-v2": {
+      "alpha": 0.5,
+      "dev_mean_ndcg10": 0.21589166399894796,
+      "dev_rows": 1200,
+      "rrf_k": 20
+    },
+    "scidocs|bge-small|hybrid|ncbi/MedCPT-Cross-Encoder": {
+      "alpha": 0.5,
+      "dev_mean_ndcg10": 0.20916737120014028,
+      "dev_rows": 1200,
+      "rrf_k": 20
+    },
+    "scidocs|e5-small|dense|BAAI/bge-reranker-base": {
+      "alpha": 0.2,
+      "dev_mean_ndcg10": 0.18912142829054743,
+      "dev_rows": 1200,
+      "rrf_k": 60
+    },
+    "scidocs|e5-small|dense|BAAI/bge-reranker-large": {
+      "alpha": 0.5,
+      "dev_mean_ndcg10": 0.19643585460048263,
+      "dev_rows": 1200,
+      "rrf_k": 20
+    },
+    "scidocs|e5-small|dense|cross-encoder/ms-marco-MiniLM-L-6-v2": {
+      "alpha": 0.3,
+      "dev_mean_ndcg10": 0.1879357151779236,
+      "dev_rows": 1200,
+      "rrf_k": 20
+    },
+    "scidocs|e5-small|dense|mixedbread-ai/mxbai-rerank-base-v2": {
+      "alpha": 0.5,
+      "dev_mean_ndcg10": 0.20033377019652,
+      "dev_rows": 1200,
+      "rrf_k": 20
+    },
+    "scidocs|e5-small|dense|ncbi/MedCPT-Cross-Encoder": {
+      "alpha": 0.7,
+      "dev_mean_ndcg10": 0.19920698891416613,
+      "dev_rows": 1200,
+      "rrf_k": 60
+    },
+    "scidocs|e5-small|hybrid|BAAI/bge-reranker-base": {
+      "alpha": 0.3,
+      "dev_mean_ndcg10": 0.1878884298670833,
+      "dev_rows": 1200,
+      "rrf_k": 20
+    },
+    "scidocs|e5-small|hybrid|BAAI/bge-reranker-large": {
+      "alpha": 0.5,
+      "dev_mean_ndcg10": 0.19368789598250946,
+      "dev_rows": 1200,
+      "rrf_k": 20
+    },
+    "scidocs|e5-small|hybrid|cross-encoder/ms-marco-MiniLM-L-6-v2": {
+      "alpha": 0.2,
+      "dev_mean_ndcg10": 0.18556377421496806,
+      "dev_rows": 1200,
+      "rrf_k": 60
+    },
+    "scidocs|e5-small|hybrid|mixedbread-ai/mxbai-rerank-base-v2": {
+      "alpha": 0.5,
+      "dev_mean_ndcg10": 0.19923599306991288,
+      "dev_rows": 1200,
+      "rrf_k": 60
+    },
+    "scidocs|e5-small|hybrid|ncbi/MedCPT-Cross-Encoder": {
+      "alpha": 0.7,
+      "dev_mean_ndcg10": 0.19663560409012595,
+      "dev_rows": 1200,
+      "rrf_k": 20
+    },
+    "scidocs|minilm|bm25s|BAAI/bge-reranker-base": {
+      "alpha": 0.6,
+      "dev_mean_ndcg10": 0.1669486374698407,
+      "dev_rows": 1200,
+      "rrf_k": 20
+    },
+    "scidocs|minilm|bm25s|BAAI/bge-reranker-large": {
+      "alpha": 0.7,
+      "dev_mean_ndcg10": 0.18042389033614672,
+      "dev_rows": 1200,
+      "rrf_k": 60
+    },
+    "scidocs|minilm|bm25s|cross-encoder/ms-marco-MiniLM-L-6-v2": {
+      "alpha": 0.9,
+      "dev_mean_ndcg10": 0.1682113428924401,
+      "dev_rows": 1200,
+      "rrf_k": 100
+    },
+    "scidocs|minilm|bm25s|mixedbread-ai/mxbai-rerank-base-v2": {
+      "alpha": 0.8,
+      "dev_mean_ndcg10": 0.17869673732522703,
+      "dev_rows": 1200,
+      "rrf_k": 60
+    },
+    "scidocs|minilm|bm25s|ncbi/MedCPT-Cross-Encoder": {
+      "alpha": 0.9,
+      "dev_mean_ndcg10": 0.18590213371918088,
+      "dev_rows": 1200,
+      "rrf_k": 20
+    },
+    "scidocs|minilm|dense|BAAI/bge-reranker-base": {
+      "alpha": 0.1,
+      "dev_mean_ndcg10": 0.2222477892227073,
+      "dev_rows": 1200,
+      "rrf_k": 20
+    },
+    "scidocs|minilm|dense|BAAI/bge-reranker-large": {
+      "alpha": 0.2,
+      "dev_mean_ndcg10": 0.22468574659285123,
+      "dev_rows": 1200,
+      "rrf_k": 20
+    },
+    "scidocs|minilm|dense|cross-encoder/ms-marco-MiniLM-L-6-v2": {
+      "alpha": 0.1,
+      "dev_mean_ndcg10": 0.22162201379464863,
+      "dev_rows": 1200,
+      "rrf_k": 60
+    },
+    "scidocs|minilm|dense|mixedbread-ai/mxbai-rerank-base-v2": {
+      "alpha": 0.4,
+      "dev_mean_ndcg10": 0.22676285568197474,
+      "dev_rows": 1200,
+      "rrf_k": 20
+    },
+    "scidocs|minilm|dense|ncbi/MedCPT-Cross-Encoder": {
+      "alpha": 0.2,
+      "dev_mean_ndcg10": 0.22390031357862913,
+      "dev_rows": 1200,
+      "rrf_k": 20
+    },
+    "scidocs|minilm|fts5_sparse|BAAI/bge-reranker-base": {
+      "alpha": 0.6,
+      "dev_mean_ndcg10": 0.1670238664762342,
+      "dev_rows": 1200,
+      "rrf_k": 20
+    },
+    "scidocs|minilm|fts5_sparse|BAAI/bge-reranker-large": {
+      "alpha": 0.7,
+      "dev_mean_ndcg10": 0.17768611849024354,
+      "dev_rows": 1200,
+      "rrf_k": 20
+    },
+    "scidocs|minilm|fts5_sparse|cross-encoder/ms-marco-MiniLM-L-6-v2": {
+      "alpha": 0.6,
+      "dev_mean_ndcg10": 0.16505920484953773,
+      "dev_rows": 1200,
+      "rrf_k": 60
+    },
+    "scidocs|minilm|fts5_sparse|mixedbread-ai/mxbai-rerank-base-v2": {
+      "alpha": 0.7,
+      "dev_mean_ndcg10": 0.1785600979332288,
+      "dev_rows": 1200,
+      "rrf_k": 20
+    },
+    "scidocs|minilm|fts5_sparse|ncbi/MedCPT-Cross-Encoder": {
+      "alpha": 0.7,
+      "dev_mean_ndcg10": 0.1849201134686936,
+      "dev_rows": 1200,
+      "rrf_k": 20
+    },
+    "scidocs|minilm|hybrid|BAAI/bge-reranker-base": {
+      "alpha": 0.4,
+      "dev_mean_ndcg10": 0.21064961360937443,
+      "dev_rows": 1200,
+      "rrf_k": 20
+    },
+    "scidocs|minilm|hybrid|BAAI/bge-reranker-large": {
+      "alpha": 0.5,
+      "dev_mean_ndcg10": 0.2124428071100114,
+      "dev_rows": 1200,
+      "rrf_k": 20
+    },
+    "scidocs|minilm|hybrid|cross-encoder/ms-marco-MiniLM-L-6-v2": {
+      "alpha": 0.2,
+      "dev_mean_ndcg10": 0.20484004895839622,
+      "dev_rows": 1200,
+      "rrf_k": 20
+    },
+    "scidocs|minilm|hybrid|mixedbread-ai/mxbai-rerank-base-v2": {
+      "alpha": 0.5,
+      "dev_mean_ndcg10": 0.21766929754616685,
+      "dev_rows": 1200,
+      "rrf_k": 20
+    },
+    "scidocs|minilm|hybrid|ncbi/MedCPT-Cross-Encoder": {
+      "alpha": 0.5,
+      "dev_mean_ndcg10": 0.2119861319045517,
+      "dev_rows": 1200,
+      "rrf_k": 100
+    },
+    "scidocs|minilm|pyserini|BAAI/bge-reranker-base": {
+      "alpha": 0.6,
+      "dev_mean_ndcg10": 0.16530408177312653,
+      "dev_rows": 1200,
+      "rrf_k": 20
+    },
+    "scidocs|minilm|pyserini|BAAI/bge-reranker-large": {
+      "alpha": 0.7,
+      "dev_mean_ndcg10": 0.17446661648234607,
+      "dev_rows": 1200,
+      "rrf_k": 60
+    },
+    "scidocs|minilm|pyserini|cross-encoder/ms-marco-MiniLM-L-6-v2": {
+      "alpha": 0.6,
+      "dev_mean_ndcg10": 0.1632788547701226,
+      "dev_rows": 1200,
+      "rrf_k": 20
+    },
+    "scidocs|minilm|pyserini|mixedbread-ai/mxbai-rerank-base-v2": {
+      "alpha": 0.7,
+      "dev_mean_ndcg10": 0.17474393191225368,
+      "dev_rows": 1200,
+      "rrf_k": 20
+    },
+    "scidocs|minilm|pyserini|ncbi/MedCPT-Cross-Encoder": {
+      "alpha": 0.8,
+      "dev_mean_ndcg10": 0.18218938095493195,
+      "dev_rows": 1200,
+      "rrf_k": 20
+    },
+    "scifact|bge-base|dense|BAAI/bge-reranker-base": {
+      "alpha": 0.7,
+      "dev_mean_ndcg10": 0.7763694844550549,
+      "dev_rows": 360,
+      "rrf_k": 60
+    },
+    "scifact|bge-base|dense|BAAI/bge-reranker-large": {
+      "alpha": 0.7,
+      "dev_mean_ndcg10": 0.7717772862152241,
+      "dev_rows": 360,
+      "rrf_k": 20
+    },
+    "scifact|bge-base|dense|cross-encoder/ms-marco-MiniLM-L-6-v2": {
+      "alpha": 0.3,
+      "dev_mean_ndcg10": 0.7516881955571205,
+      "dev_rows": 360,
+      "rrf_k": 20
+    },
+    "scifact|bge-base|dense|mixedbread-ai/mxbai-rerank-base-v2": {
+      "alpha": 0.8,
+      "dev_mean_ndcg10": 0.7978739881896645,
+      "dev_rows": 360,
+      "rrf_k": 20
+    },
+    "scifact|bge-base|dense|ncbi/MedCPT-Cross-Encoder": {
+      "alpha": 0.9,
+      "dev_mean_ndcg10": 0.8068072418100661,
+      "dev_rows": 360,
+      "rrf_k": 20
+    },
+    "scifact|bge-base|hybrid|BAAI/bge-reranker-base": {
+      "alpha": 0.7,
+      "dev_mean_ndcg10": 0.7717645710298427,
+      "dev_rows": 360,
+      "rrf_k": 100
+    },
+    "scifact|bge-base|hybrid|BAAI/bge-reranker-large": {
+      "alpha": 0.7,
+      "dev_mean_ndcg10": 0.7743984260060103,
+      "dev_rows": 360,
+      "rrf_k": 60
+    },
+    "scifact|bge-base|hybrid|cross-encoder/ms-marco-MiniLM-L-6-v2": {
+      "alpha": 0.5,
+      "dev_mean_ndcg10": 0.7434982087803905,
+      "dev_rows": 360,
+      "rrf_k": 20
+    },
+    "scifact|bge-base|hybrid|mixedbread-ai/mxbai-rerank-base-v2": {
+      "alpha": 0.8,
+      "dev_mean_ndcg10": 0.8021146204447067,
+      "dev_rows": 360,
+      "rrf_k": 100
+    },
+    "scifact|bge-base|hybrid|ncbi/MedCPT-Cross-Encoder": {
+      "alpha": 0.9,
+      "dev_mean_ndcg10": 0.8083940965589244,
+      "dev_rows": 360,
+      "rrf_k": 100
+    },
+    "scifact|bge-small|dense|BAAI/bge-reranker-base": {
+      "alpha": 0.7,
+      "dev_mean_ndcg10": 0.7605569327759581,
+      "dev_rows": 360,
+      "rrf_k": 100
+    },
+    "scifact|bge-small|dense|BAAI/bge-reranker-large": {
+      "alpha": 0.7,
+      "dev_mean_ndcg10": 0.7762890223014942,
+      "dev_rows": 360,
+      "rrf_k": 20
+    },
+    "scifact|bge-small|dense|cross-encoder/ms-marco-MiniLM-L-6-v2": {
+      "alpha": 0.6,
+      "dev_mean_ndcg10": 0.7398812012695094,
+      "dev_rows": 360,
+      "rrf_k": 20
+    },
+    "scifact|bge-small|dense|mixedbread-ai/mxbai-rerank-base-v2": {
+      "alpha": 0.6,
+      "dev_mean_ndcg10": 0.7950999014070609,
+      "dev_rows": 360,
+      "rrf_k": 20
+    },
+    "scifact|bge-small|dense|ncbi/MedCPT-Cross-Encoder": {
+      "alpha": 0.8,
+      "dev_mean_ndcg10": 0.8006776190937687,
+      "dev_rows": 360,
+      "rrf_k": 20
+    },
+    "scifact|bge-small|hybrid|BAAI/bge-reranker-base": {
+      "alpha": 0.8,
+      "dev_mean_ndcg10": 0.7594749680193832,
+      "dev_rows": 360,
+      "rrf_k": 60
+    },
+    "scifact|bge-small|hybrid|BAAI/bge-reranker-large": {
+      "alpha": 0.8,
+      "dev_mean_ndcg10": 0.765409681682407,
+      "dev_rows": 360,
+      "rrf_k": 100
+    },
+    "scifact|bge-small|hybrid|cross-encoder/ms-marco-MiniLM-L-6-v2": {
+      "alpha": 0.6,
+      "dev_mean_ndcg10": 0.737136586991423,
+      "dev_rows": 360,
+      "rrf_k": 20
+    },
+    "scifact|bge-small|hybrid|mixedbread-ai/mxbai-rerank-base-v2": {
+      "alpha": 0.6,
+      "dev_mean_ndcg10": 0.7965088785847216,
+      "dev_rows": 360,
+      "rrf_k": 20
+    },
+    "scifact|bge-small|hybrid|ncbi/MedCPT-Cross-Encoder": {
+      "alpha": 0.8,
+      "dev_mean_ndcg10": 0.8016578001504285,
+      "dev_rows": 360,
+      "rrf_k": 20
+    },
+    "scifact|e5-small|dense|BAAI/bge-reranker-base": {
+      "alpha": 0.6,
+      "dev_mean_ndcg10": 0.766326153229756,
+      "dev_rows": 360,
+      "rrf_k": 20
+    },
+    "scifact|e5-small|dense|BAAI/bge-reranker-large": {
+      "alpha": 0.7,
+      "dev_mean_ndcg10": 0.7583031920368407,
+      "dev_rows": 360,
+      "rrf_k": 20
+    },
+    "scifact|e5-small|dense|cross-encoder/ms-marco-MiniLM-L-6-v2": {
+      "alpha": 0.5,
+      "dev_mean_ndcg10": 0.7465446817662779,
+      "dev_rows": 360,
+      "rrf_k": 20
+    },
+    "scifact|e5-small|dense|mixedbread-ai/mxbai-rerank-base-v2": {
+      "alpha": 0.8,
+      "dev_mean_ndcg10": 0.7847466477469833,
+      "dev_rows": 360,
+      "rrf_k": 100
+    },
+    "scifact|e5-small|dense|ncbi/MedCPT-Cross-Encoder": {
+      "alpha": 0.9,
+      "dev_mean_ndcg10": 0.7880491572695473,
+      "dev_rows": 360,
+      "rrf_k": 100
+    },
+    "scifact|e5-small|hybrid|BAAI/bge-reranker-base": {
+      "alpha": 0.6,
+      "dev_mean_ndcg10": 0.7544633701822967,
+      "dev_rows": 360,
+      "rrf_k": 20
+    },
+    "scifact|e5-small|hybrid|BAAI/bge-reranker-large": {
+      "alpha": 0.4,
+      "dev_mean_ndcg10": 0.7619952261753499,
+      "dev_rows": 360,
+      "rrf_k": 60
+    },
+    "scifact|e5-small|hybrid|cross-encoder/ms-marco-MiniLM-L-6-v2": {
+      "alpha": 0.5,
+      "dev_mean_ndcg10": 0.7394544872940351,
+      "dev_rows": 360,
+      "rrf_k": 20
+    },
+    "scifact|e5-small|hybrid|mixedbread-ai/mxbai-rerank-base-v2": {
+      "alpha": 0.9,
+      "dev_mean_ndcg10": 0.7872949157874768,
+      "dev_rows": 360,
+      "rrf_k": 20
+    },
+    "scifact|e5-small|hybrid|ncbi/MedCPT-Cross-Encoder": {
+      "alpha": 1.0,
+      "dev_mean_ndcg10": 0.7961387679926794,
+      "dev_rows": 360,
+      "rrf_k": 20
+    },
+    "scifact|minilm|bm25s|BAAI/bge-reranker-base": {
+      "alpha": 0.8,
+      "dev_mean_ndcg10": 0.7033421131874755,
+      "dev_rows": 360,
+      "rrf_k": 60
+    },
+    "scifact|minilm|bm25s|BAAI/bge-reranker-large": {
+      "alpha": 0.9,
+      "dev_mean_ndcg10": 0.698853813777291,
+      "dev_rows": 360,
+      "rrf_k": 20
+    },
+    "scifact|minilm|bm25s|cross-encoder/ms-marco-MiniLM-L-6-v2": {
+      "alpha": 0.4,
+      "dev_mean_ndcg10": 0.6843251047150974,
+      "dev_rows": 360,
+      "rrf_k": 20
+    },
+    "scifact|minilm|bm25s|mixedbread-ai/mxbai-rerank-base-v2": {
+      "alpha": 0.9,
+      "dev_mean_ndcg10": 0.7343545821669862,
+      "dev_rows": 360,
+      "rrf_k": 20
+    },
+    "scifact|minilm|bm25s|ncbi/MedCPT-Cross-Encoder": {
+      "alpha": 0.9,
+      "dev_mean_ndcg10": 0.7445749926384804,
+      "dev_rows": 360,
+      "rrf_k": 20
+    },
+    "scifact|minilm|dense|BAAI/bge-reranker-base": {
+      "alpha": 0.8,
+      "dev_mean_ndcg10": 0.7593675916589783,
+      "dev_rows": 360,
+      "rrf_k": 60
+    },
+    "scifact|minilm|dense|BAAI/bge-reranker-large": {
+      "alpha": 0.9,
+      "dev_mean_ndcg10": 0.7652415270888534,
+      "dev_rows": 360,
+      "rrf_k": 100
+    },
+    "scifact|minilm|dense|cross-encoder/ms-marco-MiniLM-L-6-v2": {
+      "alpha": 0.8,
+      "dev_mean_ndcg10": 0.7309608316145756,
+      "dev_rows": 360,
+      "rrf_k": 20
+    },
+    "scifact|minilm|dense|mixedbread-ai/mxbai-rerank-base-v2": {
+      "alpha": 0.9,
+      "dev_mean_ndcg10": 0.7860037755271235,
+      "dev_rows": 360,
+      "rrf_k": 20
+    },
+    "scifact|minilm|dense|ncbi/MedCPT-Cross-Encoder": {
+      "alpha": 1.0,
+      "dev_mean_ndcg10": 0.7936416236730768,
+      "dev_rows": 360,
+      "rrf_k": 20
+    },
+    "scifact|minilm|fts5_sparse|BAAI/bge-reranker-base": {
+      "alpha": 0.9,
+      "dev_mean_ndcg10": 0.7246889178866575,
+      "dev_rows": 360,
+      "rrf_k": 60
+    },
+    "scifact|minilm|fts5_sparse|BAAI/bge-reranker-large": {
+      "alpha": 0.9,
+      "dev_mean_ndcg10": 0.7333845663175725,
+      "dev_rows": 360,
+      "rrf_k": 20
+    },
+    "scifact|minilm|fts5_sparse|cross-encoder/ms-marco-MiniLM-L-6-v2": {
+      "alpha": 0.3,
+      "dev_mean_ndcg10": 0.7174538284358346,
+      "dev_rows": 360,
+      "rrf_k": 20
+    },
+    "scifact|minilm|fts5_sparse|mixedbread-ai/mxbai-rerank-base-v2": {
+      "alpha": 1.0,
+      "dev_mean_ndcg10": 0.7710793122296257,
+      "dev_rows": 360,
+      "rrf_k": 20
+    },
+    "scifact|minilm|fts5_sparse|ncbi/MedCPT-Cross-Encoder": {
+      "alpha": 0.9,
+      "dev_mean_ndcg10": 0.792940410655481,
+      "dev_rows": 360,
+      "rrf_k": 20
+    },
+    "scifact|minilm|hybrid|BAAI/bge-reranker-base": {
+      "alpha": 0.7,
+      "dev_mean_ndcg10": 0.7613388849638665,
+      "dev_rows": 360,
+      "rrf_k": 100
+    },
+    "scifact|minilm|hybrid|BAAI/bge-reranker-large": {
+      "alpha": 0.7,
+      "dev_mean_ndcg10": 0.7700958494787801,
+      "dev_rows": 360,
+      "rrf_k": 60
+    },
+    "scifact|minilm|hybrid|cross-encoder/ms-marco-MiniLM-L-6-v2": {
+      "alpha": 0.5,
+      "dev_mean_ndcg10": 0.729770999937284,
+      "dev_rows": 360,
+      "rrf_k": 20
+    },
+    "scifact|minilm|hybrid|mixedbread-ai/mxbai-rerank-base-v2": {
+      "alpha": 0.9,
+      "dev_mean_ndcg10": 0.7889913701806233,
+      "dev_rows": 360,
+      "rrf_k": 100
+    },
+    "scifact|minilm|hybrid|ncbi/MedCPT-Cross-Encoder": {
+      "alpha": 1.0,
+      "dev_mean_ndcg10": 0.7963429169062355,
+      "dev_rows": 360,
+      "rrf_k": 20
+    },
+    "scifact|minilm|pyserini|BAAI/bge-reranker-base": {
+      "alpha": 0.9,
+      "dev_mean_ndcg10": 0.719884353726032,
+      "dev_rows": 360,
+      "rrf_k": 20
+    },
+    "scifact|minilm|pyserini|BAAI/bge-reranker-large": {
+      "alpha": 0.8,
+      "dev_mean_ndcg10": 0.7282795631417138,
+      "dev_rows": 360,
+      "rrf_k": 20
+    },
+    "scifact|minilm|pyserini|cross-encoder/ms-marco-MiniLM-L-6-v2": {
+      "alpha": 0.4,
+      "dev_mean_ndcg10": 0.7129334758984044,
+      "dev_rows": 360,
+      "rrf_k": 20
+    },
+    "scifact|minilm|pyserini|mixedbread-ai/mxbai-rerank-base-v2": {
+      "alpha": 1.0,
+      "dev_mean_ndcg10": 0.7618557907819459,
+      "dev_rows": 360,
+      "rrf_k": 20
+    },
+    "scifact|minilm|pyserini|ncbi/MedCPT-Cross-Encoder": {
+      "alpha": 0.9,
+      "dev_mean_ndcg10": 0.7832994930674864,
+      "dev_rows": 360,
+      "rrf_k": 20
+    }
+  },
+  "protocol_version": "omnidb-ce-study-v1",
+  "rrf_k_grid": [
+    20,
+    60,
+    100
+  ],
+  "selection_partition": "dev"
+}
