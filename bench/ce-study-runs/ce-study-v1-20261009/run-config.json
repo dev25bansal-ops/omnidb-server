@@ -8,7 +8,7 @@
       "to": 32
     }
   ],
-  "code_sha": "d2a1cc77298e9bbc132131bc31df5d97d9be5eb2",
+  "code_sha": "c86b58ba7a84892c211466e8ecdd4af42f8febb6",
   "code_sha_history": [
     {
       "from": "36d848b059ce3d836fb4d2da7696796e6ea0bae9",
@@ -33,6 +33,12 @@
       "reason": "post-reboot; only bench/ce-study-deviations.md and run-config changed (d2a1cc77). Scoring path byte-identical; all 149820 dev rows valid.",
       "recorded_unix": 1791707768.2694592,
       "to": "d2a1cc77298e9bbc132131bc31df5d97d9be5eb2"
+    },
+    {
+      "from": "d2a1cc77298e9bbc132131bc31df5d97d9be5eb2",
+      "reason": "LFS history rewrite for GitHub push (candidate-pools.jsonl -> LFS); all 68 commit SHAs changed but code CONTENT is unchanged -- scoring path (score_partition/score_pairs/load_reranker/model.predict) byte-identical. Run interrupted to restore the LFS-mangled working copy; 97660 valid test rows reloaded, resume continues from bge-large/scifact. No score is invalidated.",
+      "recorded_unix": 1791783965.268048,
+      "to": "c86b58ba7a84892c211466e8ecdd4af42f8febb6"
     }
   ],
   "corpora": [
