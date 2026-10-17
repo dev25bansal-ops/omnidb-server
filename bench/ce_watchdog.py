@@ -84,8 +84,53 @@ def _log(msg: str) -> None:
         f.write(f"{stamp} {msg}\n")
 
 
+def _check_runaway_memory() -> None:
+    """Kill any process ballooning virtual memory and starving CUDA allocations."""
+    try:
+        out = subprocess.check_output(
+            ["powershell", "-NoProfile", "-Command",
+             "Get-Process -Name '*OneDrive*' -ErrorAction SilentlyContinue | "
+             "Where-Object { $_.PagedMemorySize64 -gt 2GB } | "
+             "Select-Object -ExpandProperty Id"],
+            text=True, stderr=subprocess.DEVNULL, timeout=15)
+        for pid_str in out.split():
+            if pid_str.strip().isdigit():
+                pid = int(pid_str.strip())
+                subprocess.run(
+                    ["powershell", "-NoProfile", "-Command",
+                     f"Stop-Process -Id {pid} -Force"],
+                    timeout=15)
+                _log(f"killed runaway OneDrive process {pid} exceeding 2GB memory")
+    except Exception:
+        pass
+
+
+TOTAL_TEST_ROWS = 224895  # 5 rerankers * 44979 test queries
+
+
+def _is_test_complete() -> bool:
+    results_path = RUN_DIR / "test-results.jsonl"
+    if results_path.exists():
+        return True
+    scores_path = RUN_DIR / "test-scores.jsonl"
+    if not scores_path.exists():
+        return False
+    try:
+        # Check row count
+        count = sum(1 for line in scores_path.read_text(encoding="utf-8").splitlines() if line.strip())
+        return count >= TOTAL_TEST_ROWS
+    except Exception:
+        return False
+
+
 def main() -> int:
     RUN_DIR.mkdir(parents=True, exist_ok=True)
+    _check_runaway_memory()
+
+    # User stop flag
+    if (RUN_DIR / "stop.flag").exists():
+        _log("stop.flag present; will not resume")
+        return 0
 
     pids = _worker_pids()
     alive = [p for p in pids if _pid_alive(p)]
@@ -93,27 +138,31 @@ def main() -> int:
         _log(f"worker alive (pid {','.join(map(str, alive))}), no-op")
         return 0
 
-    if not LOCK.exists():
-        _log("no lock present; nothing to resume")
+    if _is_test_complete():
+        _log("test phase complete; nothing to resume")
         return 0
 
     owner = None
-    try:
-        owner = int(json.loads(LOCK.read_text(encoding="utf-8")).get("pid"))
-    except Exception:
-        owner = None
-    if owner is not None and _pid_alive(owner):
-        _log(f"no worker, but lock owner pid {owner} is alive; not resuming "
-             f"(runner would reject a second writer)")
-        return 0
+    if LOCK.exists():
+        try:
+            owner = int(json.loads(LOCK.read_text(encoding="utf-8")).get("pid"))
+        except Exception:
+            owner = None
+        if owner is not None and _pid_alive(owner):
+            _log(f"no worker, but lock owner pid {owner} is alive; not resuming")
+            return 0
 
-    # Stale lock, no live worker -> resume from the last completed cell.
-    _log("worker absent, lock stale; resuming test phase")
+    # Worker is absent and test phase is not complete -> resume
+    _log("worker absent and test incomplete; resuming test phase")
     cmd = [sys.executable, str(HERE / "ce_study_runner.py"), "test",
            "--run-id", RUN_ID, "--batch-size", "32", "--resume"]
+    flags = 0
+    if os.name == "nt":
+        # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+        flags = 0x00000008 | 0x00000200
     with TEST_LOG.open("a", encoding="utf-8") as out:
         p = subprocess.Popen(cmd, cwd=str(RUN), stdout=out,
-                             stderr=subprocess.STDOUT)
+                             stderr=subprocess.STDOUT, creationflags=flags)
     _log(f"resume launched (pid {p.pid})")
     return 0
 

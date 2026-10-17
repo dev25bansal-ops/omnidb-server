@@ -8,7 +8,7 @@
       "to": 32
     }
   ],
-  "code_sha": "c86b58ba7a84892c211466e8ecdd4af42f8febb6",
+  "code_sha": "5cf47af29823ea32813e940a79ef8ab133f45821",
   "code_sha_history": [
     {
       "from": "36d848b059ce3d836fb4d2da7696796e6ea0bae9",
@@ -39,6 +39,18 @@
       "reason": "LFS history rewrite for GitHub push (candidate-pools.jsonl -> LFS); all 68 commit SHAs changed but code CONTENT is unchanged -- scoring path (score_partition/score_pairs/load_reranker/model.predict) byte-identical. Run interrupted to restore the LFS-mangled working copy; 97660 valid test rows reloaded, resume continues from bge-large/scifact. No score is invalidated.",
       "recorded_unix": 1791783965.268048,
       "to": "c86b58ba7a84892c211466e8ecdd4af42f8febb6"
+    },
+    {
+      "from": "c86b58ba7a84892c211466e8ecdd4af42f8febb6",
+      "reason": "post-stall resume (worker died 2026-10-13 10:15 with no traceback; no reboot since; files verified clean: 121100 rows, 0 corrupt, 0 dupes). Only run-config changed since last recorded SHA (c86b58b -> 563a4b2) -- scoring path byte-identical, so all 121100 test rows remain valid. Resumes at bge-large/scidocs.",
+      "recorded_unix": 1792153787.6477199,
+      "to": "563a4b246185e10f535e89d82150ad0de553fb52"
+    },
+    {
+      "from": "563a4b246185e10f535e89d82150ad0de553fb52",
+      "reason": "post-OOM resume (OneDrive leaked 25GB paged memory causing CUDA memory allocation failure; OneDrive terminated, 20GB free on C: and 17.8GB free virtual memory restored; watchdog updated to auto-kill runaway memory and auto-resume on incomplete test). Only bench/ce_watchdog.py changed -- scoring path byte-identical, so all 170779 test rows remain valid. Resumes at mxbai/fiqa.",
+      "recorded_unix": 1792265051.594519,
+      "to": "5cf47af29823ea32813e940a79ef8ab133f45821"
     }
   ],
   "corpora": [
