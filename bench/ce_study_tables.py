@@ -54,73 +54,94 @@ def main() -> int:
                  f"missing={len(meta['missing_cells'])}")
     lines.append("")
 
-    # --- Table: hybrid first stage, by reranker and window (primary evidence) ---
+    # --- Table: hybrid first stage (20 rows: 4 corpora x 5 rerankers) ---
+    family_size = meta["family_size_predeclared"]
     lines.append("\\begin{table*}[!t]")
     lines.append("\\centering")
     lines.append("\\footnotesize")
-    lines.append("\\caption{Held-out test, hybrid first stage: frozen development-selected "
-                 "rank fusion of the first-stage and re-ranker rankings. $\\Delta$ is the "
-                 "mean paired nDCG@10 difference (fused $-$ base) on the test partition; "
-                 "the interval is a paired percentile bootstrap; $p_{\\text{perm}}$ is a "
-                 "two-sided sign-flip permutation test on that mean with exact zero "
-                 "differences retained; $p_{\\text{Holm}}$ is the correction across the "
-                 "full pre-declared family of %d contrasts, in which an unobtainable "
-                 "cell enters at $p=1$. CE-alone is the re-ranker's own ordering scored "
-                 "as a retriever over the same candidate pool, and oracle is the best "
-                 "achievable ordering of that pool.}"
-                 % meta["family_size_predeclared"])
+    lines.append(f"\\caption{{Held-out evaluation on the hybrid first stage: standalone cross-encoder "
+                 f"re-ranking (pure replacement) versus development-selected rank fusion across candidate "
+                 f"windows $w \\in \\{{25, 50, 100\\}}$. Results are averaged across the four sentence "
+                 f"encoders. ``CE-alone'' is the re-ranker's own ordering scored as a retriever over the "
+                 f"retrieved pool. Fused@$w$ is the development-selected rank fusion at window $w$. "
+                 f"Mean $\\Delta$ is the paired difference (fused $-$ base) with its 95\\% paired percentile "
+                 f"bootstrap interval. Sig reports the count of cells out of 12 (4 encoders $\\times$ "
+                 f"3 windows) statistically significant after Holm correction over the pre-declared family "
+                 f"of {family_size} contrasts.}}")
     lines.append("\\label{tab:heldout-hybrid}")
-    lines.append("\\begin{tabular}{@{}llrrrrrrr@{}}")
+    lines.append("\\begin{tabular}{@{}llrrrrrrrr@{}}")
     lines.append("\\toprule")
-    lines.append("Corpus & Re-ranker & $w$ & Base & Fused & $\\Delta$ & 95\\% CI & "
-                 "$p_{\\text{perm}}$ & $p_{\\text{Holm}}$ \\\\")
+    lines.append("Corpus & Re-ranker & Base & CE-alone & Fused@25 & Fused@50 & Fused@100 & Mean $\\Delta$ & 95\\% CI & Sig/12 \\\\")
     lines.append("\\midrule")
-    rows = [c for c in cells if c["stage"] == "hybrid"]
-    rows.sort(key=lambda c: (c["corpus"], c["reranker"], c["window"]))
-    for c in rows:
-        ci = c["bootstrap"]
+
+    hyb = [c for c in cells if c["stage"] == "hybrid"]
+    agg_hyb = defaultdict(dict)
+    for c in hyb:
+        key = (c["corpus"], c["reranker"])
+        agg_hyb[key].setdefault(c["window"], []).append(c)
+
+    prev_corp = None
+    for k in sorted(agg_hyb):
+        corp, rk = k
+        if prev_corp is not None and corp != prev_corp:
+            lines.append("\\midrule")
+        prev_corp = corp
+        all_c = [c for w in (25, 50, 100) for c in agg_hyb[k][w]]
+        base = sum(c["base_mean"] for c in all_c) / len(all_c)
+        ce = sum(c["ce_only_mean"] for c in all_c) / len(all_c)
+        f25 = sum(c["blend_mean"] for c in agg_hyb[k][25]) / len(agg_hyb[k][25])
+        f50 = sum(c["blend_mean"] for c in agg_hyb[k][50]) / len(agg_hyb[k][50])
+        f100 = sum(c["blend_mean"] for c in agg_hyb[k][100]) / len(agg_hyb[k][100])
+        delta = sum(c["delta_mean"] for c in all_c) / len(all_c)
+        ci_lo = sum(c["bootstrap"]["ci_low"] for c in all_c) / len(all_c)
+        ci_hi = sum(c["bootstrap"]["ci_high"] for c in all_c) / len(all_c)
+        sig = sum(1 for c in all_c if c.get("holm_p_all_test_cells", 1.0) < 0.05)
         lines.append(
-            f"{c['corpus']} & {SHORT_MODEL.get(c['reranker'], c['reranker'])} & "
-            f"{c['window']} & {f4(c['base_mean'])} & {f4(c['blend_mean'])} & "
-            f"${fsigned(c['delta_mean'])}$ & "
-            f"$[{fsigned(ci['ci_low'])}, {fsigned(ci['ci_high'])}]$ & "
-            f"{c['permutation']['p_two_sided']:.4f} & "
-            f"{c.get('holm_p_all_test_cells', float('nan')):.4f} \\\\")
+            f"{corp} & {SHORT_MODEL.get(rk, rk)} & {f4(base)} & {f4(ce)} & "
+            f"{f4(f25)} & {f4(f50)} & {f4(f100)} & ${fsigned(delta)}$ & "
+            f"$[{fsigned(ci_lo)}, {fsigned(ci_hi)}]$ & {sig:>2}/12 \\\\")
     lines.append("\\bottomrule")
     lines.append("\\end{tabular}")
     lines.append("\\end{table*}")
     lines.append("")
 
-    # --- Table: CE-alone versus base and pool oracle, by stage ---
+    # --- Table: Overview across all five first stages (20 rows: 4 corpora x 5 stages) ---
     lines.append("\\begin{table*}[!t]")
     lines.append("\\centering")
     lines.append("\\footnotesize")
-    lines.append("\\caption{Held-out test: is the re-ranker's own ordering better or worse "
-                 "than the first stage, and how much headroom did the pool contain? One row "
-                 "per corpus, first stage and re-ranker, averaged over windows. ``CE-alone'' "
-                 "is the re-ranker's ordering scored as a retriever; ``oracle'' is the best "
-                 "nDCG@10 any ordering of the retrieved pool could reach, so the gap "
-                 "between base and oracle bounds what any second stage could recover.}")
+    lines.append("\\caption{Held-out comparison across all five first stages: performance of the "
+                 "un-reranked baseline (Base), best possible ordering of the retrieved pool (Oracle), "
+                 "standalone re-ranking (CE-alone), and development-selected rank fusion (Fused), "
+                 "averaged across the five re-rankers and three candidate windows ($w \\in \\{25, 50, 100\\}$). "
+                 "Sig reports the count of cells statistically significant after Holm(660) correction "
+                 "out of $N$ (15 for lexical stages, 60 for dense and hybrid).}")
     lines.append("\\label{tab:heldout-stage}")
-    lines.append("\\begin{tabular}{@{}lllrrrr@{}}")
+    lines.append("\\begin{tabular}{@{}llrrrrrr@{}}")
     lines.append("\\toprule")
-    lines.append("Corpus & First stage & Re-ranker & Base & CE-alone & Oracle & "
-                 "Fused $-$ base \\\\")
+    lines.append("Corpus & First stage & Base & Oracle & CE-alone & Fused & Mean $\\Delta$ & Sig/$N$ \\\\")
     lines.append("\\midrule")
-    agg = defaultdict(list)
+
+    agg_stg = defaultdict(list)
     for c in cells:
-        key = (c["corpus"], c["stage"], c["reranker"])
-        agg[key].append(c)
-    for key in sorted(agg):
-        group = agg[key]
-        base = sum(g["base_mean"] for g in group) / len(group)
-        ce = sum(g["ce_only_mean"] for g in group) / len(group)
-        oracle = sum(g["oracle_mean"] for g in group) / len(group)
-        delta = sum(g["delta_mean"] for g in group) / len(group)
-        corpus, stage, reranker = key
-        lines.append(f"{corpus} & {STAGE_LABEL.get(stage, stage)} & "
-                     f"{SHORT_MODEL.get(reranker, reranker)} & {f4(base)} & {f4(ce)} & "
-                     f"{f4(oracle)} & ${fsigned(delta)}$ \\\\")
+        agg_stg[(c["corpus"], c["stage"])].append(c)
+
+    prev_corp = None
+    for k in sorted(agg_stg):
+        corp, stg = k
+        if prev_corp is not None and corp != prev_corp:
+            lines.append("\\midrule")
+        prev_corp = corp
+        grp = agg_stg[k]
+        base = sum(c["base_mean"] for c in grp) / len(grp)
+        orc = sum(c["oracle_mean"] for c in grp) / len(grp)
+        ce = sum(c["ce_only_mean"] for c in grp) / len(grp)
+        fused = sum(c["blend_mean"] for c in grp) / len(grp)
+        delta = sum(c["delta_mean"] for c in grp) / len(grp)
+        total_cells = len(grp)
+        sig = sum(1 for c in grp if c.get("holm_p_all_test_cells", 1.0) < 0.05)
+        lines.append(
+            f"{corp} & {STAGE_LABEL.get(stg, stg)} & {f4(base)} & {f4(orc)} & "
+            f"{f4(ce)} & {f4(fused)} & ${fsigned(delta)}$ & {sig:>2}/{total_cells} \\\\")
     lines.append("\\bottomrule")
     lines.append("\\end{tabular}")
     lines.append("\\end{table*}")
@@ -143,7 +164,7 @@ def main() -> int:
                  "$n$ cells \\\\")
     lines.append("\\midrule")
     by_corpus = defaultdict(list)
-    for c in rows:
+    for c in hyb:
         by_corpus[c["corpus"]].append(c)
     for corpus in sorted(by_corpus):
         group = by_corpus[corpus]
@@ -158,7 +179,7 @@ def main() -> int:
 
     out = run / "heldout-tables.tex"
     out.write_text("\n".join(lines), encoding="utf-8")
-    print(f"wrote {out} ({len(rows)} hybrid rows, {len(cells)} cells total)")
+    print(f"wrote {out} ({len(hyb)} hybrid rows, {len(cells)} cells total)")
     return 0
 
 

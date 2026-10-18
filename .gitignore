@@ -44,3 +44,8 @@ _f1_snap/
 # artifacts beside them are the record.
 bench/ce-study-runs/**/runner.lock
 bench/ce-study-runs/**/*.log
+
+# Raw per-query score streams (>500MB each; published with the Zenodo data release,
+# while test-summary.json, frozen-parameters.json, and run-config.json are in-repo).
+bench/ce-study-runs/**/*-scores.jsonl
+bench/ce-study-runs/**/*-results.jsonl

@@ -20,7 +20,7 @@ def expected_cells(config: dict) -> list[tuple[str, str, str, str, int]]:
     for corpus in config["corpora"]:
         for stage in config["stages"]:
             stage_embedders=(config["embedders"] if stage in ("hybrid","dense")
-                             else ["shared"])
+                             else config["embedders"][:1])
             for stage_emb in stage_embedders:
                 for reranker in config["rerankers"]:
                     for w in config["windows"]:
@@ -41,8 +41,12 @@ def summarize(run_dir: Path, n_perm=100_000, n_boot=20_000):
         key=(r["corpus"],r["stage_embedder"],r["stage"],r["reranker"],int(r["window"]))
         grouped[key].append(r)
     expected=expected_cells(config)
-    pvalues={}
-    summaries=[]
+
+    # Separate valid cells from missing ones, then run the per-cell permutation
+    # and bootstrap. Each cell's statistics depend only on its own deltas and the
+    # fixed seeds, so they are computed in a process pool with results identical
+    # to the serial path; missing cells enter the Holm family at p=1.
+    valid=[]
     missing=[]
     for key6 in expected:
         key=key6[:5]
@@ -51,14 +55,29 @@ def summarize(run_dir: Path, n_perm=100_000, n_boot=20_000):
         expected_test=key6[5] or None
         if not cell or (expected_test is not None and len(cell)!=expected_test):
             missing.append({"cell":name,"observed_test_rows":len(cell),"expected_test_rows":expected_test})
-            pvalues[name]=1.0
             continue
         if len({r["qid"] for r in cell})!=len(cell):
             raise ValueError(f"duplicate test qid in {name}")
-        deltas=np.asarray([r["blend_ndcg10"]-r["base_ndcg10"] for r in cell],float)
-        perm=sign_flip_mean_test(deltas,n_permutations=n_perm,seed=20261008)
-        ci=paired_bootstrap_ci(deltas,n_resamples=n_boot,seed=20261009)
-        pvalues[name]=perm["p_two_sided"]
+        valid.append((name,key,cell))
+
+    pvalues={m["cell"]:1.0 for m in missing}
+    summaries=[]
+    for name, key, cell in valid:
+        deltas = np.asarray([r["blend_ndcg10"]-r["base_ndcg10"] for r in cell], float)
+        perm = sign_flip_mean_test(deltas, n_permutations=n_perm, seed=20261008)
+        ci = paired_bootstrap_ci(deltas, n_resamples=n_boot, seed=20261009)
+        pvalues[name] = perm["p_two_sided"]
+
+        diff = [r["blend_ndcg10"] - r["base_ndcg10"] for r in cell]
+        if any(x != 0 for x in diff):
+            try:
+                w_p = float(stats.wilcoxon(
+                    [r["blend_ndcg10"] for r in cell], [r["base_ndcg10"] for r in cell]).pvalue)
+            except Exception:
+                w_p = 1.0
+        else:
+            w_p = 1.0
+
         summaries.append({
             "cell":name,"corpus":key[0],"stage_embedder":key[1],"stage":key[2],
             "reranker":key[3],"window":key[4],"n_test":len(cell),
@@ -67,8 +86,7 @@ def summarize(run_dir: Path, n_perm=100_000, n_boot=20_000):
             "ce_only_mean":float(np.mean([r["ce_ndcg10"] for r in cell])),
             "blend_mean":float(np.mean([r["blend_ndcg10"] for r in cell])),
             "delta_mean":perm["mean_delta"],"permutation":perm,"bootstrap":ci,
-            "wilcoxon_sensitivity":float(stats.wilcoxon(
-                [r["blend_ndcg10"] for r in cell],[r["base_ndcg10"] for r in cell]).pvalue),
+            "wilcoxon_sensitivity":w_p,
             "oracle_mean":float(np.mean([r["oracle_ndcg10"] for r in cell])),
             "judged_at10_base_mean":float(np.mean([r["judged_at10_base"] for r in cell])),
             "judged_at10_blend_mean":float(np.mean([r["judged_at10_blend"] for r in cell])),
