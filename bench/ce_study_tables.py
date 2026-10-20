@@ -61,9 +61,9 @@ def main() -> int:
     lines.append("\\footnotesize")
     lines.append(f"\\caption{{Held-out evaluation on the hybrid first stage: standalone cross-encoder "
                  f"re-ranking (pure replacement) versus development-selected rank fusion across candidate "
-                 f"windows $w \\in \\{{25, 50, 100\\}}$. Results are averaged across the four sentence "
+                 f"windows $W \\in \\{{25, 50, 100\\}}$. Results are averaged across the four sentence "
                  f"encoders. ``CE-alone'' is the re-ranker's own ordering scored as a retriever over the "
-                 f"retrieved pool. Fused@$w$ is the development-selected rank fusion at window $w$. "
+                 f"retrieved pool. Fused@$W$ is the development-selected rank fusion at window $W$. "
                  f"Mean $\\Delta$ is the paired difference (fused $-$ base) with its 95\\% paired percentile "
                  f"bootstrap interval. Sig reports the count of cells out of 12 (4 encoders $\\times$ "
                  f"3 windows) statistically significant after Holm correction over the pre-declared family "
@@ -112,7 +112,7 @@ def main() -> int:
     lines.append("\\caption{Held-out comparison across all five first stages: performance of the "
                  "un-reranked baseline (Base), best possible ordering of the retrieved pool (Oracle), "
                  "standalone re-ranking (CE-alone), and development-selected rank fusion (Fused), "
-                 "averaged across the five re-rankers and three candidate windows ($w \\in \\{25, 50, 100\\}$). "
+                 "averaged across the five re-rankers and three candidate windows ($W \\in \\{25, 50, 100\\}$). "
                  "Sig reports the count of cells statistically significant after Holm(660) correction "
                  "out of $N$ (15 for lexical stages, 60 for dense and hybrid).}")
     lines.append("\\label{tab:heldout-stage}")
@@ -151,13 +151,21 @@ def main() -> int:
     lines.append("\\begin{table}[!t]")
     lines.append("\\centering")
     lines.append("\\footnotesize")
-    lines.append("\\caption{Judging robustness, hybrid first stage, averaged over re-rankers "
+    lines.append("\\caption{Judging density on the hybrid first stage, averaged over re-rankers "
                  "and windows. ``Judged@10'' is the mean fraction of the returned top ten that "
                  "carries a relevance judgment; ``condensed $\\Delta$'' recomputes the paired "
-                 "difference after removing unjudged documents, as a check that the reported "
-                 "losses are not an artifact of the re-ranker surfacing more unjudged "
-                 "documents than the first stage does.}")
+                 "difference after removing unjudged documents from both rankings. The "
+                 "condensed $\\Delta$ is a diagnostic, not a like-for-like robustness check: "
+                 "with a judged fraction of the top ten near 0.10, the condensed top ten holds "
+                 "about one judged document, so condensation changes the depth scored as well "
+                 "as the list. The standard-nDCG gains do not survive as magnitudes under it "
+                 "(median condensed-to-standard ratio 0.0000 over the 213 significant cells), "
+                 "and the corpus-level non-negativity shown here is an averaging effect: 18 of "
+                 "those 213 cells have a negative condensed $\\Delta$ and 154 are exactly zero. "
+                 "What the judged densities do support is that the re-ranker does not inflate "
+                 "unjudged documents. See Section~VI-C.}")
     lines.append("\\label{tab:heldout-judged}")
+    lines.append("\\setlength{\\tabcolsep}{4pt}")
     lines.append("\\begin{tabular}{@{}lrrrr@{}}")
     lines.append("\\toprule")
     lines.append("Corpus & Judged@10 base & Judged@10 fused & Condensed $\\Delta$ & "

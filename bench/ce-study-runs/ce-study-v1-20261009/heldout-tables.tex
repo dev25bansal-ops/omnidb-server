@@ -4,7 +4,7 @@
 \begin{table*}[!t]
 \centering
 \footnotesize
-\caption{Held-out evaluation on the hybrid first stage: standalone cross-encoder re-ranking (pure replacement) versus development-selected rank fusion across candidate windows $w \in \{25, 50, 100\}$. Results are averaged across the four sentence encoders. ``CE-alone'' is the re-ranker's own ordering scored as a retriever over the retrieved pool. Fused@$w$ is the development-selected rank fusion at window $w$. Mean $\Delta$ is the paired difference (fused $-$ base) with its 95\% paired percentile bootstrap interval. Sig reports the count of cells out of 12 (4 encoders $\times$ 3 windows) statistically significant after Holm correction over the pre-declared family of 660 contrasts.}
+\caption{Held-out evaluation on the hybrid first stage: standalone cross-encoder re-ranking (pure replacement) versus development-selected rank fusion across candidate windows $W \in \{25, 50, 100\}$. Results are averaged across the four sentence encoders. ``CE-alone'' is the re-ranker's own ordering scored as a retriever over the retrieved pool. Fused@$W$ is the development-selected rank fusion at window $W$. Mean $\Delta$ is the paired difference (fused $-$ base) with its 95\% paired percentile bootstrap interval. Sig reports the count of cells out of 12 (4 encoders $\times$ 3 windows) statistically significant after Holm correction over the pre-declared family of 660 contrasts.}
 \label{tab:heldout-hybrid}
 \begin{tabular}{@{}llrrrrrrrr@{}}
 \toprule
@@ -40,7 +40,7 @@ scifact & MedCPT & 0.7265 & 0.7641 & 0.7535 & 0.7618 & 0.7769 & $+0.0375$ & $[+0
 \begin{table*}[!t]
 \centering
 \footnotesize
-\caption{Held-out comparison across all five first stages: performance of the un-reranked baseline (Base), best possible ordering of the retrieved pool (Oracle), standalone re-ranking (CE-alone), and development-selected rank fusion (Fused), averaged across the five re-rankers and three candidate windows ($w \in \{25, 50, 100\}$). Sig reports the count of cells statistically significant after Holm(660) correction out of $N$ (15 for lexical stages, 60 for dense and hybrid).}
+\caption{Held-out comparison across all five first stages: performance of the un-reranked baseline (Base), best possible ordering of the retrieved pool (Oracle), standalone re-ranking (CE-alone), and development-selected rank fusion (Fused), averaged across the five re-rankers and three candidate windows ($W \in \{25, 50, 100\}$). Sig reports the count of cells statistically significant after Holm(660) correction out of $N$ (15 for lexical stages, 60 for dense and hybrid).}
 \label{tab:heldout-stage}
 \begin{tabular}{@{}llrrrrrr@{}}
 \toprule
@@ -76,8 +76,9 @@ scifact & Pyserini & 0.6790 & 0.9119 & 0.7368 & 0.7373 & $+0.0583$ &  9/15 \\
 \begin{table}[!t]
 \centering
 \footnotesize
-\caption{Judging robustness, hybrid first stage, averaged over re-rankers and windows. ``Judged@10'' is the mean fraction of the returned top ten that carries a relevance judgment; ``condensed $\Delta$'' recomputes the paired difference after removing unjudged documents, as a check that the reported losses are not an artifact of the re-ranker surfacing more unjudged documents than the first stage does.}
+\caption{Judging density on the hybrid first stage, averaged over re-rankers and windows. ``Judged@10'' is the mean fraction of the returned top ten that carries a relevance judgment; ``condensed $\Delta$'' recomputes the paired difference after removing unjudged documents from both rankings. The condensed $\Delta$ is a diagnostic, not a like-for-like robustness check: with a judged fraction of the top ten near 0.10, the condensed top ten holds about one judged document, so condensation changes the depth scored as well as the list. The standard-nDCG gains do not survive as magnitudes under it (median condensed-to-standard ratio 0.0000 over the 213 significant cells), and the corpus-level non-negativity shown here is an averaging effect: 18 of those 213 cells have a negative condensed $\Delta$ and 154 are exactly zero. What the judged densities do support is that the re-ranker does not inflate unjudged documents. See Section~VI-C.}
 \label{tab:heldout-judged}
+\setlength{\tabcolsep}{4pt}
 \begin{tabular}{@{}lrrrr@{}}
 \toprule
 Corpus & Judged@10 base & Judged@10 fused & Condensed $\Delta$ & $n$ cells \\
