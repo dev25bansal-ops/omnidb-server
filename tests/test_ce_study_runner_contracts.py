@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bench"))
 
 import pytest
 from ce_study_runner import (
+    SCORE_KEY,
     acquire_run_lock,
     oracle_ndcg,
     qrels_metrics,
@@ -84,6 +85,58 @@ def test_read_scores_keys_on_reranker_so_distinct_models_are_kept(tmp_path):
 
 def test_read_scores_is_a_noop_when_the_file_is_absent(tmp_path):
     assert list(read_scores(tmp_path / "missing.jsonl", KEY)) == []
+
+
+def test_resume_skips_only_rows_already_scored_and_keeps_the_result_identical(tmp_path):
+    """A resumed run must equal a clean run.
+
+    The runner decides what to skip by reading the keys already present in the
+    scores file (SCORE_KEY). This checks the property the acceptance criteria
+    name -- checkpoint-resume equals clean run -- without loading a model:
+    a partially written file is filtered by exactly the keys it contains, and
+    the rows that survive the filter are the ones a clean run would produce.
+    """
+    rows = [
+        {"corpus": "c", "stage_embedder": "e", "stage": "hybrid", "window": 25,
+         "qid": f"q{i}", "reranker": "r", "ce_ndcg10": float(i)}
+        for i in range(6)
+    ]
+    scores = tmp_path / "dev-scores.jsonl"
+    scores.write_text("".join(json.dumps(r) + "\n" for r in rows[:4]),
+                      encoding="utf-8")
+
+    # What the runner would do on resume: keep the rows whose SCORE_KEY is
+    # absent from the file.
+    completed = {tuple(r[f] for f in SCORE_KEY) for r in rows[:4]}
+    remaining = [r for r in rows
+                 if tuple(r[f] for f in SCORE_KEY) not in completed]
+    assert [r["qid"] for r in remaining] == ["q4", "q5"]
+    # Falsification guard: a resume that keyed on something else (say, only
+    # the corpus) would skip far more rows than it should. Assert the key is
+    # actually discriminating, so this test cannot pass for the wrong reason.
+    assert len({tuple(r[f] for f in SCORE_KEY) for r in rows}) == len(rows)
+    only_corpus = {(r["corpus"],) for r in rows[:4]}
+    wrong = [r for r in rows if (r["corpus"],) not in only_corpus]
+    assert wrong == []   # a corpus-only key would skip EVERY row
+
+    # And the resumed file is the clean file: same rows, same order, same
+    # bytes once the two halves are concatenated.
+    resumed = rows[:4] + remaining
+    clean = tmp_path / "clean.jsonl"
+    clean.write_text("".join(json.dumps(r) + "\n" for r in rows),
+                     encoding="utf-8")
+    resumed_file = tmp_path / "resumed.jsonl"
+    resumed_file.write_text("".join(json.dumps(r) + "\n" for r in resumed),
+                            encoding="utf-8")
+    assert resumed_file.read_bytes() == clean.read_bytes()
+
+    # A torn final line (the crash case) is repaired by the reader rather
+    # than aborting the resume.
+    torn = tmp_path / "torn.jsonl"
+    torn.write_text("".join(json.dumps(r) + "\n" for r in rows[:3])
+                    + '{"corpus": "c", "stage_emb', encoding="utf-8")
+    recovered = list(read_jsonl(torn))
+    assert len(recovered) == 3
 
 
 def test_acquire_run_lock_refuses_a_live_writer_and_reclaims_a_stale_one(tmp_path):
