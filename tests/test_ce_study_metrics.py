@@ -3,8 +3,9 @@
 These tests do not load models or execute BEIR retrieval; they pin the contracts
 used by the expensive study runner.
 """
-from pathlib import Path
 import sys
+from pathlib import Path
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bench"))
 
 import pytest
@@ -20,8 +21,10 @@ def test_rank_rrf_endpoints_and_tie_order_are_deterministic():
 
 
 def test_rank_rrf_rejects_misalignment_and_duplicate_candidates():
-    with pytest.raises(ValueError): rank_rrf(["a"],[0.1,0.2],0.5,60)
-    with pytest.raises(ValueError): rank_rrf(["a","a"],[0.1,0.2],0.5,60)
+    with pytest.raises(ValueError):
+        rank_rrf(["a"], [0.1, 0.2], 0.5, 60)
+    with pytest.raises(ValueError):
+        rank_rrf(["a", "a"], [0.1, 0.2], 0.5, 60)
 
 
 def test_judged_unjudged_and_oracle_pool_metrics():

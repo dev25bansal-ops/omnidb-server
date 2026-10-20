@@ -3,16 +3,24 @@
 No model weights or retrieval runs are touched; only the pure helpers that the
 expensive harness depends on are tested.
 """
-from pathlib import Path
 import json
 import os
 import subprocess
 import sys
+from pathlib import Path
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bench"))
 
 import pytest
-from ce_study_runner import (K, acquire_run_lock, oracle_ndcg, qrels_metrics,
-                             read_jsonl, read_scores, rank_rrf, release_run_lock)
+from ce_study_runner import (
+    acquire_run_lock,
+    oracle_ndcg,
+    qrels_metrics,
+    rank_rrf,
+    read_jsonl,
+    read_scores,
+    release_run_lock,
+)
 
 
 def test_metrics_handle_unjudged_documents_and_oracle(tmp_path):

@@ -1,8 +1,7 @@
 """Synthetic tests for locked CE-study inference utilities."""
-from pathlib import Path
 import sys
+from pathlib import Path
 
-import numpy as np
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bench"))
@@ -42,6 +41,9 @@ def test_cluster_bootstrap_preserves_shared_query_cluster_shape():
 
 
 def test_invalid_inputs_fail_closed():
-    with pytest.raises(ValueError): sign_flip_mean_test([])
-    with pytest.raises(ValueError): paired_bootstrap_ci([float("nan")])
-    with pytest.raises(ValueError): holm_adjust({"x": 1.2})
+    with pytest.raises(ValueError):
+        sign_flip_mean_test([])
+    with pytest.raises(ValueError):
+        paired_bootstrap_ci([float("nan")])
+    with pytest.raises(ValueError):
+        holm_adjust({"x": 1.2})
